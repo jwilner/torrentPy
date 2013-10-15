@@ -5,7 +5,7 @@
 # Lists
 # Dictionaries
 
-class Tokenizer():
+class BencodeParser():
     '''Takes a string and returns a list of tuples'''
 
     _end_struct = 'END'
@@ -19,14 +19,28 @@ class Tokenizer():
                 (lambda x: x == 'l', lambda x : self._list_constructor),
                 (lambda x: x == 'e', lambda x : self._end_struct)
                 )
-    
-    def _dict_constructor():
-        pass
+   
+    def parse_and_build(self):
+        self._token = self._token_generator()
+        return next(self._token)() 
 
-    def _list_constructor():
-        pass
+    def _dict_constructor(self):
+        new_dict = {}
+        while True:
+            k = next(self._token)
+            if k == self._end_struct:
+                return new_dict
+            new_dict[k()] = next(self._token)()
 
-    def _get_token(self):
+    def _list_constructor(self):
+        new_list = []
+        while True:
+           item = next(self._token)
+           if item == self._end_struct:
+               return new_list
+           new_list.append(item())
+
+    def _token_generator(self):
         while True:
             char = self._stream.read(1)
             if char == '':
@@ -42,7 +56,8 @@ class Tokenizer():
                 break
             x += next_char
         length = int(x)
-        return self._stream.read(length)
+        word = self._stream.read(length)
+        return lambda : word
 
     def _parse_int(self,x):
         integer = ''
@@ -51,12 +66,11 @@ class Tokenizer():
             if next_char == 'e':
                 break
             integer += next_char
-        return int(integer)
+        return lambda : int(integer)
 
 
 if __name__ == '__main__':
-    import io
-    with io.open('pretend_file.txt','rb') as f:
-        t = Tokenizer(f)
-        print [p for p in t._get_token()]
-
+    import io,sys
+    with io.open(sys.argv[1],'rb') as f:
+        t = BencodeParser(f)
+        print t.parse_and_build()
