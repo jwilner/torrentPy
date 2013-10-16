@@ -1,3 +1,7 @@
+class Torrent():
+    '''Wrapper for torrent metadata file'''
+
+
 
 class BencodeParser():
     '''Takes a bencoded file and returns the dictionary encoded within.'''
@@ -86,7 +90,7 @@ class BencodeParser():
         return lambda : int(integer)
 
 if __name__ == '__main__':
-    import io,sys
+    import io,sys,pprint
     try:
         filename = sys.argv[1]
     except IndexError:
@@ -94,4 +98,4 @@ if __name__ == '__main__':
 
     with io.open(filename,'rb') as f:
         t = BencodeParser(f)
-        print t.parse_and_build()
+        pprint.pprint(t.parse_and_build())
