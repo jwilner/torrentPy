@@ -1,6 +1,41 @@
+import io
+
 class Torrent():
     '''Wrapper for torrent metadata file'''
+    def __init__(self,filename):
+        '''Opens file with context manager'''
+        with io.open(filename,'rb') as f:
+            parser = BencodeParser(f)
+            self._data = parser.parse_and_build()
+        self._cache = {}
 
+    @property
+    def announce(self):
+        return self.query('announce')
+
+    @property
+    def pieces(self):
+        pieces = self.query('pieces')
+        return [pieces[i:i+20] for i in range(0,len(pieces),20)]
+
+    def query(self,key):
+        try:
+            return self._cache[key]
+        except KeyError: 
+            self._cache[key] = self._traverseTree(key,self._data)
+        return self._cache[key]
+
+    def _traverseTree(self,key,tree):
+        for k,v in tree.items():
+            if k == key:
+                return v 
+            if type(v) == dict:
+                try:
+                    return self._traverseTree(key,v)
+                except IndexError:
+                    continue
+        else:
+            raise IndexError(key+' not found in torrent data.')
 
 
 class BencodeParser():
