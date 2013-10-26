@@ -1,25 +1,78 @@
-import io,datetime
-import sha
+import datetime
+import io
+from hashlib import sha1
 from utils import memo, bencode, debencode, prop_and_memo
-from processes import make_peers
+
+class Tracker(object):
+    '''Represents the http tracker server and handles interactions
+    with it -- nested within a torrent object'''
+    def __init__(self,torrent,announce_url):
+        self.announce_url = announce_url
+        self._torrent = torrent
+
+    def handle_tracker_response(self,response):
+        '''Cannot simply raise exception for errors here because asynchronous
+        handling means the exception would resolve to the client before the 
+        torrent'''
+
+        info = debencode(io.BytesIO(response.content)) 
+        if 'failure reason' in info:
+            self._torrent.handle_tracker_failure(self,info)         
+        elif 'warning message' in info:
+            self._torrent.handle_tracker_warning(self,info) 
+        else:
+            self._parse_tracker_response(info)
+
+    def _parse_tracker_response(self,info):
+        pass 
 
 class Torrent(object):
-    '''Wrapper for torrent metadata file'''
+    '''Wraps torrent metadata and keeps track of processes'''
 
-    def __init__(self,filename):
+    def __init__(self,filename,client):
         '''Opens file with context manager'''
+        self.client = client
+
         with io.open(filename,'rb') as f:
             self._data = debencode(f)
+
         self.file_mode = 'multi' if 'files' in self.info else 'single'
         self.downloaded = 0
         self.uploaded = 0
-    
+
+        self.trackers = {Tracker(self.announce,self)} 
+        self.trackers += self._parse_announce_list(self.announce_list)
+
+        request_params = self.announce_params
+        request_params['event'] = 'started'
+
+        for t in self.trackers:
+            client.make_tracker_request(
+                t.announce,
+                request_params,
+                t.handle_tracker_response,
+                self.handle_tracker_error)
+
     def __hash__(self):
         return self._hashed_info
+
+    def __str__(self):
+        return '<Torrent tracked at {0}>'.format(self.announce)
 
     def update_data(self,new_data):
         self._data.update(new_data)
         self.last_updated = datetime.datetime()
+    
+        
+    def handle_tracker_error(self,response):
+        raise Exception('Handle tracker error not yet implemented')
+
+    def handle_tracker_failure(self,tracker,response):
+        # just prune tracker, no?
+        raise Exception('Handle tracker failure not yet implemented')
+
+    def handle_tracker_warning(self,tracker,response):
+        raise Exception('Handle tracker warning not yet implemented')
 
     @prop_and_memo
     def announce(self):
@@ -32,7 +85,7 @@ class Torrent(object):
     @prop_and_memo
     def hashed_info(self):
         '''Hashed info dict for requests'''
-        return sha.new(bencode(self.info)).digest()
+        return sha1(bencode(self.info)).digest()
     
     @prop_and_memo
     def total_length(self):
@@ -55,6 +108,28 @@ class Torrent(object):
             return self.query('announce-list')
         except KeyError:
             return []
+
+    def _parse_announce_list(self,announce_list):
+        '''Recursive method that will make sure to get every possible Tracker 
+        out of announce list'''
+        return_set = {}
+        for item in announce_list:
+            if type(item) == list:
+                return_set += self._parse_announce_list(item)
+            else:
+                return_set.add(Tracker(item,self))
+        return return_set
+
+    @prop_and_memo
+    def announce_params(self):
+        return {'info_hash':self.hashed_info,
+                'peer_id':self.client.client_id,
+                'port':self.client.port,
+                'uploaded':self.uploaded,
+                'downloaded':self.downloaded,
+                'left':self.total_length,
+                'compact':1,
+                'supportcrypto':1}
 
     @prop_and_memo
     def creation_date(self):
@@ -94,28 +169,6 @@ class Torrent(object):
             # this pattern ensures that an IndexError is only raised if the 
             # key isn't found at ANY level of recursion
             raise KeyError(key + ' not found in torrent data.')
-
-class LiveTorrent(Torrent):
-    '''Extension of Torrent, provides access to methods and data
-    required for a currently operating torrent.'''
-    
-    def __init__(self,filename,client):
-        super(self,LiveTorrent).__init__(self,filename)  
-        self.client = client
-
-    def __str__(self):
-        return '<LiveTorrent tracked at {0}>'.format(self.announce)
-
-    @prop_and_memo
-    def announce_params(self):
-        return {'info_hash':self.hashed_info,
-                'peer_id':self.client.client_id,
-                'port':self.client.port,
-                'uploaded':self.uploaded,
-                'downloaded':self.downloaded,
-                'left':self.total_length,
-                'compact':1,
-                'supportcrypto':1}
 
 
         

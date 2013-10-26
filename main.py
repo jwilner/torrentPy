@@ -1,9 +1,10 @@
-import logging, select, socket, config, requests
-from io import BytesIO
-from utils import debencode
+import logging, select, socket, config, time
 from peer import SocketManager, Peer
-from torrent import LiveTorrent
+from torrent import Torrent
 from collections import defaultdict
+from requests_futures import FuturesSession
+from requests.exceptions import HTTPError
+
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -12,7 +13,8 @@ class UnhandledSocketEvent(Exception):
     pass
 
 class BitTorrentClient(SocketManager):
-    '''Object encapsulating central info for the process'''
+    '''Main object encapsulating central info and work flow for the 
+    process'''
     
     registered = []
     _MAX_LISTEN = config.MAX_LISTEN
@@ -23,6 +25,8 @@ class BitTorrentClient(SocketManager):
         s.bind((s.gethostname(),self.port))
         s.listen(self._MAX_LISTEN)
         self.register(s,read=self._accept_connection)
+
+        self._http_session = FuturesSession()
 
         super(BitTorrentClient,self).__init__(s)
         
@@ -41,21 +45,16 @@ class BitTorrentClient(SocketManager):
         except KeyError:
             raise AttributeError
 
-    def announce_torrent(self,filename):
+    def start_torrent(self,filename):
         '''Takes a filename for a torrent file, processes that file and 
         enqueues a request via socket.'''
-        t = LiveTorrent(filename,self)
-        request_params = t.announce_params
-        request_params['event'] = 'started'
-        result = self._make_tracker_request(t.announce,request_params)
+        self._torrents.add(Torrent(filename,self))
 
-        # do something with result, register torrent somehow
-        
     def scrape_torrent(self,torrent):
+        '''AttributeError can bubble through here if no scrape_url'''
+        raise Exception('Scrape torrent not yet implemented')
         url = torrent.scrape_url
-        result = self._make_tracker_request(
-                                url,
-                                {'info_hash':torrent.hashed_info})     
+        self.make_tracker_request(url,{'info_hash':torrent.hashed_info})     
         
         # why have I even implemented this?
 
@@ -63,11 +62,13 @@ class BitTorrentClient(SocketManager):
         '''Register sockets and handlers'''
         self._handlers[socket.getsockname()] = socket_handlers
 
-    def _make_tracker_request(self,url,data):
-        # rewrite using TCP to make HTTP requests, be non-blocking
-        r = requests.get(url,data=data)         
-        r.raise_for_status()
-        return debencode(BytesIO(r.content))
+    def make_tracker_request(self,url,data,handler,e_handler):
+        '''this instantiates a future object, while binding a handler that will
+        be called on a bedecoded result and an error handler that will be called
+        on an http error'''
+
+        future = self._session.get(url,data)
+        self._futures.add((future,handler,e_handler))
 
     def _accept_connection(self,s):
         socket, address = s.accept()
@@ -79,7 +80,33 @@ class BitTorrentClient(SocketManager):
     def _run_loop(self):
         '''Main loop'''
         while True:
+            self._check_timers()
+            self._handle_http_requests()
             self._select_sockets_and_handle()
+
+    def _check_timers(self):
+        now = time.time()
+        ready_to_go = {(c,t) for (c,t) in self._timers if t >= now}
+
+        for callback, timestamp in ready_to_go:
+            callback()
+
+        self._timers -= ready_to_go
+                
+    def _handle_http_requests(self):
+        '''Checks futures and if complete, calls an appropriate handler'''             
+
+        completed = {(f,h,e) for (f,h,e) in self._futures if f.done()}
+
+        for future, handler, e_handler in completed: 
+            response = future.result()
+            try:
+                response.raise_for_status()
+            except HTTPError:
+                e_handler(response)
+            handler(response)
+
+        self._futures -= completed
 
     def _select_sockets_and_handle(self):
         '''Use select interface to get prepared sockets, and then
