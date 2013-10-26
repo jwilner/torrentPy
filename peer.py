@@ -19,9 +19,7 @@ class SocketManager(object):
             'error': self.handle_socket_error
             }
 
-    def connect(self):
         self.client.register(self.socket,self.socket_handlers)
-        self.socket.connect(self.address)
 
     def parse_message(self):
         pass
@@ -75,7 +73,7 @@ class Peer(SocketManager):
     def register_handshake(self,msg,sent):
         self._handshake['sent'] = sent
 
-    def parse_message(self):
+def parse_message(self):
         if self._handshook['received']:
             msg = messages.gather_message_from_socket(self.socket) 
         else:

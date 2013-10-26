@@ -1,5 +1,6 @@
-import logging, select, socket, config, time
+import logging, select, socket, config
 from peer import SocketManager, Peer
+from time import time
 from torrent import Torrent
 from collections import defaultdict
 from requests_futures import FuturesSession
@@ -50,17 +51,13 @@ class BitTorrentClient(SocketManager):
         enqueues a request via socket.'''
         self._torrents.add(Torrent(filename,self))
 
-    def scrape_torrent(self,torrent):
-        '''AttributeError can bubble through here if no scrape_url'''
-        raise Exception('Scrape torrent not yet implemented')
-        url = torrent.scrape_url
-        self.make_tracker_request(url,{'info_hash':torrent.hashed_info})     
-        
-        # why have I even implemented this?
-
     def register(self,socket,socket_handlers):
         '''Register sockets and handlers'''
         self._handlers[socket.getsockname()] = socket_handlers
+
+    def add_timer(self,interval,callback):
+        '''Adds a callback to fire in a specified time'''
+        self._timers.add((callback,time()+interval))
 
     def make_tracker_request(self,url,data,handler,e_handler):
         '''this instantiates a future object, while binding a handler that will
@@ -85,7 +82,7 @@ class BitTorrentClient(SocketManager):
             self._select_sockets_and_handle()
 
     def _check_timers(self):
-        now = time.time()
+        now = time()
         ready_to_go = {(c,t) for (c,t) in self._timers if t >= now}
 
         for callback, timestamp in ready_to_go:

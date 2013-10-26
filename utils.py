@@ -86,7 +86,7 @@ def four_bytes_to_int(four_bytes):
 def int_to_big_endian(integer):
     return struct.pack('>i',integer)
 
-def make_peer_addresses_from_string(tor,p_string):
+def parse_peer_string(p_string):
     for p in (p_string[i:i+6] for i in range(0,len(p_string),6)):
         ip = '.'.join(str(ord(ip_part)) for ip_part in p[:4])
         port = 256*(ord(p[4]))+ord(p[5])
