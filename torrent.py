@@ -1,25 +1,9 @@
 import io,datetime
-from hashlib import sha1
-from urllib import urlencode
-from utils import memo, bencode, debencode
+import sha
+from utils import memo, bencode, debencode, prop_and_memo
+from processes import make_peers
 
-def prop_and_memo(f):
-    return property(memo(f))
-
-class BitTorrentClient():
-    '''Object encapsulating central info for the process'''
-    
-    def __init__(self,port=6881):
-        self._data = {'client_id':'-jw0001-123456789012',
-                      'port':port}
-
-    def __repr__(self):
-        return "<Joe's BitTorrent Client -- id: {0}>".format(self._data['client_id'])
-
-    def __getattr__(self,key):
-        return self._data[key]
-
-class Torrent():
+class Torrent(object):
     '''Wrapper for torrent metadata file'''
 
     def __init__(self,filename):
@@ -27,7 +11,12 @@ class Torrent():
         with io.open(filename,'rb') as f:
             self._data = debencode(f)
         self.file_mode = 'multi' if 'files' in self.info else 'single'
+        self.downloaded = 0
+        self.uploaded = 0
     
+    def __hash__(self):
+        return self._hashed_info
+
     def update_data(self,new_data):
         self._data.update(new_data)
         self.last_updated = datetime.datetime()
@@ -43,11 +32,14 @@ class Torrent():
     @prop_and_memo
     def hashed_info(self):
         '''Hashed info dict for requests'''
-        return sha1(bencode(self.info)).digest()
+        return sha.new(bencode(self.info)).digest()
     
     @prop_and_memo
-    def length(self):
-        return self.query('length')
+    def total_length(self):
+        if self.file_mode == 'single':
+            return self.query('length')
+        else:
+            return str(sum(int(f['length']) for f in self.query('files')))
 
     @prop_and_memo
     def pieces(self):
@@ -101,39 +93,39 @@ class Torrent():
         else:
             # this pattern ensures that an IndexError is only raised if the 
             # key isn't found at ANY level of recursion
-            raise KeyError(key+' not found in torrent data.')
+            raise KeyError(key + ' not found in torrent data.')
 
 class LiveTorrent(Torrent):
     '''Extension of Torrent, provides access to methods and data
     required for a currently operating torrent.'''
     
     def __init__(self,filename,client):
-        Torrent.__init__(self,filename)  
+        super(self,LiveTorrent).__init__(self,filename)  
         self.client = client
 
-    @prop_and_memo
-    def announce_url_query_string(self):
-        return self.announce + '?' + urlencode(self.announce_params)
-    
+    def __str__(self):
+        return '<LiveTorrent tracked at {0}>'.format(self.announce)
+
     @prop_and_memo
     def announce_params(self):
         return {'info_hash':self.hashed_info,
                 'peer_id':self.client.client_id,
                 'port':self.client.port,
-                'uploaded':0,
-                'downloaded':0,
-                'left':self.length,
+                'uploaded':self.uploaded,
+                'downloaded':self.downloaded,
+                'left':self.total_length,
                 'compact':1,
-                'event':'started'}
-    
+                'supportcrypto':1}
+
+
+        
 if __name__ == '__main__':
     from pprint import pprint
-    from torrent_requests import send_started_announce_request, get_torrent_scrape
+    from main import BitTorrentClient
+    from torrent_requests import send_started_announce_request
     t = LiveTorrent('../../../data/torrentPy/flagfromserver.torrent',BitTorrentClient())
     h = send_started_announce_request(t)
-
-    for peer in (h['peers'][i:i+6] for i in range(0,len(h['peers']),6)):
-        print '.'.join(str(ord(ip_part)) for ip_part in peer[:4])
-        print 256*(ord(peer[4])+ord(peer[5]))
+    for g in make_peers(t,h['peers']):
+        print str(g)
     pprint(h)
     

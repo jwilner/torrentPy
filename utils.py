@@ -1,5 +1,5 @@
 from functools import partial
-from struct import unpack,pack
+import struct
 
 def memo(f):
     cache = {}
@@ -10,6 +10,9 @@ def memo(f):
             cache[args] = f(*args)
             return cache[args]
     return g
+
+def prop_and_memo(f):
+    return property(memo(f))
 
 def bencode(whole):
     '''Takes a data structure and bencodes it'''
@@ -24,7 +27,7 @@ def bencode(whole):
         return 'l{0}e'.format(''.join(parse(term) for term in a_list))
 
     def encode_dict(a_dict):
-        return 'd{0}e'.format(''.join('{0}{1}'.format(parse(k),parse(v)) for k,v in a_dict.items()))
+        return 'd{0}e'.format(''.join('{0}{1}'.format(parse(k),parse(v)) for k,v in sorted(a_dict.items())))
 
     dispatch = {int : encode_int,
                 str : encode_str,
@@ -77,11 +80,17 @@ def debencode(stream):
                 return current
             int_buffer.append(next_char) 
 
-def four_bytes_to_string(four_bytes):
-    return unpack('l>',four_bytes)
+def four_bytes_to_int(four_bytes):
+    return struct.unpack('>i',four_bytes)[0]
 
-def string_to_four_bytes(string):
-    return pack('l>',string)
+def int_to_big_endian(integer):
+    return struct.pack('>i',integer)
+
+def make_peer_addresses_from_string(tor,p_string):
+    for p in (p_string[i:i+6] for i in range(0,len(p_string),6)):
+        ip = '.'.join(str(ord(ip_part)) for ip_part in p[:4])
+        port = 256*(ord(p[4]))+ord(p[5])
+        yield (ip,port) 
 
 if __name__ == '__main__':
     import sys,pprint,io
@@ -91,7 +100,7 @@ if __name__ == '__main__':
         filename = 'pretend_file.txt'
 
     with io.open(filename,'rb') as f:
-        struct = debencode(f)
-    pprint.pprint(struct)
+        structure = debencode(f)
+    pprint.pprint(structure)
 
 
