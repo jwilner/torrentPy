@@ -1,7 +1,7 @@
 import logging, select, socket, config, requests
 from io import BytesIO
 from utils import debencode
-from peer import Peer
+from peer import SocketManager, Peer
 from torrent import LiveTorrent
 from collections import defaultdict
 
@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 class UnhandledSocketEvent(Exception):
     pass
 
-class BitTorrentClient(object):
+class BitTorrentClient(SocketManager):
     '''Object encapsulating central info for the process'''
     
     registered = []
@@ -19,9 +19,18 @@ class BitTorrentClient(object):
     _handlers = defaultdict(dict)
     
     def __init__(self,port=config.PORT):
+        s = socket.socket()
+        s.bind((s.gethostname(),self.port))
+        s.listen(self._MAX_LISTEN)
+        self.register(s,read=self._accept_connection)
+
+        super(BitTorrentClient,self).__init__(s)
+        
         self._data = {'client_id':config.CLIENT_ID,
                       'port':port}
         self._torrents = set() 
+
+        self._run_loop()
 
     def __repr__(self):
         return "<Joe's BitTorrent Client -- id: {0}>".format(self._data['client_id'])
@@ -32,29 +41,30 @@ class BitTorrentClient(object):
         except KeyError:
             raise AttributeError
 
-    def run(self):
-        s = socket.socket()
-        s.bind(('',self.port))
-        s.listen(self._MAX_LISTEN)
-        self.register(s,read=self._accept_connection)
-        
-        self._run_loop()
-
-    def start_torrent(self,filename):
-        '''Takes a filename, processes it and returns a torrent'''
+    def announce_torrent(self,filename):
+        '''Takes a filename for a torrent file, processes that file and 
+        enqueues a request via socket.'''
         t = LiveTorrent(filename,self)
         request_params = t.announce_params
         request_params['event'] = 'started'
         result = self._make_tracker_request(t.announce,request_params)
+
+        # do something with result, register torrent somehow
         
     def scrape_torrent(self,torrent):
-        try:
-            url = torrent.scrape_url
+        url = torrent.scrape_url
+        result = self._make_tracker_request(
+                                url,
+                                {'info_hash':torrent.hashed_info})     
         
+        # why have I even implemented this?
 
-
+    def register(self,socket,socket_handlers):
+        '''Register sockets and handlers'''
+        self._handlers[socket.getsockname()] = socket_handlers
 
     def _make_tracker_request(self,url,data):
+        # rewrite using TCP to make HTTP requests, be non-blocking
         r = requests.get(url,data=data)         
         r.raise_for_status()
         return debencode(BytesIO(r.content))
@@ -90,8 +100,4 @@ class BitTorrentClient(object):
                         self._exception_handlers[e](e)
                     except KeyError:
                         raise e
-
-    def register(self,socket,socket_handlers):
-        '''Register sockets and handlers'''
-        self._handlers[socket.getsockname()] = socket_handlers
 

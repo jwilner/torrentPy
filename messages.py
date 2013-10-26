@@ -1,4 +1,4 @@
-from utils import int_to_big_endian, prop_and_memo, four_bytes_to_int 
+from utils import int_to_big_endian, four_bytes_to_int 
 
 class InvalidMessage(Exception):
     pass
@@ -8,8 +8,12 @@ class InvalidHandshake(InvalidMessage):
 
 class Msg(object):
     '''super class'''
+
     def __init__(self):
         self.observers = []
+
+    def __repr__(self):
+        return '{0}({1!s})'.format(self.__class__._name__,self)
 
 class Handshake(Msg):
     def __init__(self,peerid,info_hash,reserved='\x00\x00\x00\x00\x00\x00\x00\x00',pstr='BitTorrent protocol'):
@@ -23,8 +27,6 @@ class Handshake(Msg):
     def __str__(self):
         return self._pstrlen + self._pstr + self._reserved + self._info_hash + self._peerid
 
-    def __repr__(self):
-        return 'Handshake('+str(self)+')'
 
 class Message(Msg):
     id = ''
@@ -37,7 +39,7 @@ class Message(Msg):
     def __str__(self):
         return ''.join(str(x) for x in (self.length_prefix,self.id)) + self.payload       
 
-    @prop_and_memo
+    @property
     def payload(self):
         return ''.join(str(x) for x in self._payload)
 
