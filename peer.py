@@ -2,14 +2,17 @@ import messages, config
 from time import time
 from collections import deque
 from functools import partial
-from utils import prop_and_memo
+from utils import prop_and_memo, four_bytes_to_int
 
 class Peer(object):
     '''Class representing peer for specific torrent download and
     providing interface with specific TCP socket'''
 
+    _parsers_and_constructors = messages.parsers_and_constructors
+
     def __init__(self,socket,client,torrent=None):
         self.socket = socket
+        self.active = True
 
         self.outbox = deque() 
         self.sent_folder, self.archive = [], []
@@ -19,19 +22,23 @@ class Peer(object):
         self._torrent = torrent
 
         self.client.register(self.socket,
-                                read=self.parse_message,
+                                read=self.handle_incoming,
                                 write=self.send_next_message,
                                 error=self.handle_socket_error)
 
         self.last_heard_from = time()
+        self.last_spoke_to = 0
 
         self.am_choking, self.am_interesting = True, False
         self.choking_me, self.interesting_me = True, False
 
+        # Am I anal? Maybe.
         attr_setter = partial(self.__setattr__) 
         choke_setter = partial(attr_setter,'choking_me')
         interest_setter = partial(attr_setter,'interesting_me')
 
+        # Don't need to define a handler for KeepAlive, because undefined 
+        # messages fail silently but still update 'last_heard_from'
         self._message_handlers = {
             messages.Handshake : self._process_handshake,
             messages.Choke : lambda x : choke_setter(True),
@@ -68,8 +75,9 @@ class Peer(object):
 
     @torrent.setter
     def torrent(self,t):
+        '''stuff to do at time of torrent assignment'''
         self._torrent = t
-        self.has = [0]*t.num_pieces
+        self.has = [False]*t.num_pieces
 
     def send_handshake(self):
         handshake = messages.Handshake(
@@ -78,15 +86,9 @@ class Peer(object):
         handshake.observers.append(self._register_handshake)
         self.outbox.append(handshake)
 
-    def parse_message(self):
+    def handle_incoming(self):
         self.last_heard_from = time()
-
-        if self._handshake['received']:
-            msg = messages.gather_message_from_socket(self.socket) 
-        else:
-            # InvalidHandshakeException can bubble through here.
-            msg = messages.gather_handshake_from_socket(self.socket)
-
+        msg = self._parse_string_to_msg()
         self.archive.append(msg)
         
         try:
@@ -105,8 +107,10 @@ class Peer(object):
     def handle_socket_error(self):
         pass
 
-    def update_message_handlers(self,**handlers):
-        pass
+    def drop(self):
+        '''Procedure to disconnect from peer'''
+        self.active = False
+        self.socket.close()
 
     @prop_and_memo
     def address(self):
@@ -124,9 +128,33 @@ class Peer(object):
         self.socket.sendall(str(msg))
         self.sent_folder.append(msg)
 
+        self.last_spoke_to = time()
+
         # notify any observers
         for observer in msg.observers:
             observer(msg,True)
+
+    def _parse_string_to_msg(self):
+        if not self._handshake['received']:
+            # then this is required to be a handshake
+            return self._parse_string_to_handshake()
+        bytes_length_prefix = self.socket.recv(4)
+        length = four_bytes_to_int(bytes_length_prefix)
+        if not length:
+            return messages.KeepAlive()
+        msg_body = self.socket.recv(length)
+        msg_id = ord(msg_body[0])
+
+        constructor_helper = messages.id_to_constructor[msg_id]
+        return constructor_helper(msg_body[1:])    
+
+    def _parse_string_to_handshake(self):
+        pstrlen = ord(self.socket.recv(1))
+        pstr = self.socket.recv(pstrlen) 
+        reserved = self.socket.recv(8)
+        info_hash = self.socket.recv(20)
+        peer_id = self.socket.recv(20)
+        return messages.Handshake(peer_id,info_hash,reserved=reserved,pstr=pstr)
 
     def _register_handshake(self,msg,sent):
         '''Fires as callback when handshake is sent. This is a method 
@@ -149,13 +177,13 @@ class Peer(object):
             pass
         if msg.length > config.MAX_REQUESTED_PIECE_LENGTH:
             # this cat's cray -- drop 'em 
-            self.torrent.drop_peer(self)
+            self.drop()
         self.wants.add((msg.index,msg.begin,msg.length))
 
     def _process_cancel(self,msg):
         if msg.length > config.MAX_REQUESTED_PIECE_LENGTH:
             # initiate dropping procedure
-            self.torrent.drop_peer(self)
+            self.drop()
         self.wants.discard((msg.index,msg.begin,msg.length))  
 
     def _process_piece(self,msg):

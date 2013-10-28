@@ -18,7 +18,8 @@ class Torrent(object):
         self.file_mode = 'multi' if 'files' in self.info else 'single'
 
         self.trackers = {TrackerHandler(self,self.announce)} 
-        self.trackers += self._parse_announce_list(self.announce_list)
+        self.trackers += {TrackerHandler(self,a) for a in 
+                             self._parse_announce_list(self.announce_list)}
 
         for t in self.trackers:
             t.announce_to_tracker('started')
@@ -59,7 +60,7 @@ class Torrent(object):
     
     @prop_and_memo
     def total_length(self):
-        if self.file_mode == 'single':
+        if self.file_mode is 'single':
             return self.query('length')
         else:
             return str(sum(int(f['length']) for f in self.query('files')))
@@ -99,10 +100,10 @@ class Torrent(object):
         out of announce list'''
         return_set = {}
         for item in announce_list:
-            if type(item) == list:
+            if type(item) is list:
                 return_set += self._parse_announce_list(item)
             else:
-                return_set.add(TrackerHandler(item,self))
+                return_set.add(item)
         return return_set
 
     @prop_and_memo
@@ -120,9 +121,9 @@ class Torrent(object):
         '''Recursive method searching the structure of the tree, will raise
         an index error if nothing is found.'''
         for k,v in tree.items():
-            if k == key:
+            if k is key:
                 return v 
-            if type(v) == dict:
+            if type(v) is dict:
                 try:
                     return self._traverse_tree(key,v)
                 except KeyError:
@@ -130,5 +131,5 @@ class Torrent(object):
         else:
             # this pattern ensures that an IndexError is only raised if the 
             # key isn't found at ANY level of recursion
-            raise KeyError(key + ' not found in torrent data.')
+            raise KeyError('{0} not found in torrent data.'.format(key))
 

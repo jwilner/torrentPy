@@ -1,4 +1,4 @@
-from utils import int_to_big_endian, four_bytes_to_int 
+from utils import int_to_big_endian, four_bytes_to_int, prop_and_memo
 
 class InvalidMessage(Exception):
     pass
@@ -27,25 +27,40 @@ class Handshake(Msg):
     def __str__(self):
         return self._pstrlen + self._pstr + self._reserved + self._info_hash + self._peerid
 
-
 class Message(Msg):
     id = ''
-    _payload = ''
 
-    def __init__(self,*args):
+    def __init__(self,from_string=False,*args):
         super(Message,self).__init__()
-        self._payload = args 
+        if from_string:
+            self._string = args
+        else:
+            self._payload = args
 
     def __str__(self):
-        return ''.join(str(x) for x in (self.length_prefix,self.id)) + self.payload       
+        return ''.join(str(x) for x in (self.length_prefix,self.id)) + self._formatted_string       
 
-    @property
-    def payload(self):
-        return ''.join(str(x) for x in self._payload)
+    @prop_and_memo
+    def _formatted_string(self):
+        try:
+            return self._string
+        except AttributeError:
+            return ''.join(str(x) for x in self._parsed_payload)
+
+    @prop_and_memo
+    def _parsed_payload(self):
+        try:
+            return self._payload
+        except AttributeError:
+            try:
+                parse = self._parse
+                return parse(self._string)
+            except AttributeError:
+                return self._string
 
     @property
     def length_prefix(self):
-        return int_to_big_endian(len(str(self.id)+self.payload))
+        return int_to_big_endian(len(str(self.id)+self._inner_string))
 
 class KeepAlive(Message):
     '''No payload or id'''
@@ -73,13 +88,11 @@ class Have(Message):
 
     @property
     def piece_index(self):
-        return self._payload[0]
+        return self._parsed_payload[0]
 
 class Bitfield(Message):
     '''Expects a bitfield as an init arg'''
     id = 5
-
-    raise Exception('Bitfield message not yet implemented.')
 
     @property
     def bitfield(self):
@@ -90,21 +103,39 @@ class Request(Message):
     '''Expects index, begin, length as init args'''
     id = 6
 
+    def _parse(self,m): 
+        return [four_bytes_to_int(m[i:i+4]) for i in (0,4,8)]
+
     @property
     def index(self):
-        return self._payload[0]
+        return self._parsed_payload[0]
 
     @property
     def begin(self):
-        return self._payload[1]
+        return self._parsed_payload[1]
 
     @property
     def length(self):
-        return self._payload[2]
-          
+        return self._parsed_payload[2]
+
 class Piece(Message):
     '''Expects index, begin, block as init args'''
     id = 7
+
+    def _parse(self,m):
+        return [four_bytes_to_int(m[i:i+4]) for i in (0,4)]+[m[8:]]
+
+    @property
+    def index(self):
+        return self._parsed_payload[0]
+
+    @property
+    def begin(self):
+        return self._parsed_payload[1]
+
+    @property
+    def block(self):
+        return self._parsed_payload[2]
 
 class Cancel(Request): # employs same payload as Request
     '''Expects index, begin, length as init args'''
@@ -114,24 +145,7 @@ class Port(Message):
    '''Expects listen-port as an argument'''
    id = 9
 
-msg_lookup = {sc.id:sc for sc in Message.__subclasses__() if sc.id}
 
-def gather_handshake_from_socket(s):
-    pstrlen = ord(s.recv(1))
-    pstr = s.recv(pstrlen)
-    reserved = s.recv(8)
-    info_hash = s.recv(20)
-    peer_id = s.recv(20)
-    h = Handshake(peer_id,info_hash,reserved=reserved,pstr=pstr)
-    return h
-
-def gather_message_from_socket(s):
-    '''Takes a socket and yields message objects contained within'''
-    bytes_length_prefix = s.recv(4)        
-    length = four_bytes_to_int(bytes_length_prefix)
-    if not length:
-        return KeepAlive()
-    msg_body = s.recv(length)
-    msg_id = ord(msg_body[0])
-    return msg_lookup[msg_id](msg_body[1:])
-
+id_to_constructor = {
+        sc.id:sc.__init__ for sc in Message.__subclasses__()
+        }

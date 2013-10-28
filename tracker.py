@@ -24,8 +24,8 @@ class TrackerHandler(object):
         self.client.make_tracker_request(
                 self.announce_url,
                 request_params,
-                self.handle_response,
-                self.torrent.handle_tracker_error)
+                self.handle_response, # valid response callback
+                self.torrent.handle_tracker_error) # error handler
 
     def handle_response(self,response):
         '''Cannot simply raise exception for errors here because asynchronous
@@ -40,7 +40,7 @@ class TrackerHandler(object):
 
     def act_on_response(self,info):
         '''Separated out from handle_response so it can be used as a callback
-        after a warning message.'''
+        after a warning message mebbe?'''
         self.data.update(info)
          
         # register new announce with client at next appropriate time
@@ -94,7 +94,7 @@ class TrackerHandler(object):
         # replace it with 'scrape' for the scrape URL else AttributeError
         ind = self.announce_url.rindex('/') + 1
         end = ind+8
-        if self.announce_url[ind:end] == 'announce':
+        if self.announce_url[ind:end] is 'announce':
             return self.announce_url[:ind]+'scrape'+self.announce_url[end:]
         else:
             raise AttributeError
