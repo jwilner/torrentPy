@@ -79,6 +79,13 @@ class Bitfield(Message):
     '''Expects a bitfield as an init arg'''
     id = 5
 
+    raise Exception('Bitfield message not yet implemented.')
+
+    @property
+    def bitfield(self):
+        # dynamically calculate bitfield and return as list of booleans
+        pass
+
 class Request(Message):
     '''Expects index, begin, length as init args'''
     id = 6
@@ -99,7 +106,7 @@ class Piece(Message):
     '''Expects index, begin, block as init args'''
     id = 7
 
-class Cancel(Request):
+class Cancel(Request): # employs same payload as Request
     '''Expects index, begin, length as init args'''
     id = 8
 
