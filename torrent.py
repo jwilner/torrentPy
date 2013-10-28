@@ -16,8 +16,6 @@ class Torrent(object):
             self._data = debencode(f)
 
         self.file_mode = 'multi' if 'files' in self.info else 'single'
-        self.downloaded = 0
-        self.uploaded = 0
 
         self.trackers = {TrackerHandler(self,self.announce)} 
         self.trackers += self._parse_announce_list(self.announce_list)
@@ -37,6 +35,14 @@ class Torrent(object):
     def handle_tracker_failure(self,tracker,response):
         # just prune tracker, no?
         raise Exception('Handle tracker failure not yet implemented')
+
+    @property
+    def downloaded(self):
+        return sum(len(piece.bytes) for piece in self._dled_pieces) 
+
+    @property
+    def uploaded(self):
+        return sum(peer.given for peer in self.peers.values())
 
     @prop_and_memo
     def announce(self):
@@ -72,7 +78,7 @@ class Torrent(object):
 
     @prop_and_memo
     def announce_list(self):
-        '''N.B. each item here seems to be encased in a list by default. Again,'''
+        '''N.B. each item here seems to be encased in a list by default.'''
         try:
             return self.query('announce-list')
         except KeyError:
@@ -108,9 +114,9 @@ class Torrent(object):
     def query(self,key):
         '''This is the public method for accessing data in the torrent
         file. If data isn't found, a KeyError will bubble through here.'''
-        return self._traverseTree(key,self._data)
+        return self._traverse_tree(key,self._data)
 
-    def _traverseTree(self,key,tree):
+    def _traverse_tree(self,key,tree):
         '''Recursive method searching the structure of the tree, will raise
         an index error if nothing is found.'''
         for k,v in tree.items():
@@ -118,7 +124,7 @@ class Torrent(object):
                 return v 
             if type(v) == dict:
                 try:
-                    return self._traverseTree(key,v)
+                    return self._traverse_tree(key,v)
                 except KeyError:
                     continue
         else:

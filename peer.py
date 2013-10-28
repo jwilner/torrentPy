@@ -2,15 +2,14 @@ import messages, config
 from time import time
 from collections import deque
 from functools import partial
+from utils import prop_and_memo
 
 class Peer(object):
     '''Class representing peer for specific torrent download and
     providing interface with specific TCP socket'''
 
     def __init__(self,socket,client,torrent=None):
-        self.ip, self.port = socket.getsockname()
         self.socket = socket
-        self.address = self.ip, self.port 
 
         self.outbox = deque() 
         self.sent_folder, self.archive = [], []
@@ -26,10 +25,8 @@ class Peer(object):
 
         self.last_heard_from = time()
 
-        self.am_choking = True
-        self.am_interesting = False
-        self.choking_me = True
-        self.interesting_me = False
+        self.am_choking, self.am_interesting = True, False
+        self.choking_me, self.interesting_me = True, False
 
         attr_setter = partial(self.__setattr__) 
         choke_setter = partial(attr_setter,'choking_me')
@@ -111,6 +108,18 @@ class Peer(object):
     def update_message_handlers(self,**handlers):
         pass
 
+    @prop_and_memo
+    def address(self):
+        return self.socket.getsockname()
+
+    @prop_and_memo
+    def ip(self):
+        return self.address[0]
+
+    @prop_and_memo
+    def port(self):
+        return self.address[1]
+
     def _send_message(self,msg):
         self.socket.sendall(str(msg))
         self.sent_folder.append(msg)
@@ -140,13 +149,13 @@ class Peer(object):
             pass
         if msg.length > config.MAX_REQUESTED_PIECE_LENGTH:
             # this cat's cray -- drop 'em 
-            pass
+            self.torrent.drop_peer(self)
         self.wants.add((msg.index,msg.begin,msg.length))
 
     def _process_cancel(self,msg):
         if msg.length > config.MAX_REQUESTED_PIECE_LENGTH:
             # initiate dropping procedure
-            pass
+            self.torrent.drop_peer(self)
         self.wants.discard((msg.index,msg.begin,msg.length))  
 
     def _process_piece(self,msg):
