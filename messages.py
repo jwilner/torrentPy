@@ -71,6 +71,10 @@ class Have(Message):
     '''Expects piece index as an init arg'''
     id = 4
 
+    @property
+    def piece_index(self):
+        return self._payload[0]
+
 class Bitfield(Message):
     '''Expects a bitfield as an init arg'''
     id = 5
@@ -78,12 +82,24 @@ class Bitfield(Message):
 class Request(Message):
     '''Expects index, begin, length as init args'''
     id = 6
+
+    @property
+    def index(self):
+        return self._payload[0]
+
+    @property
+    def begin(self):
+        return self._payload[1]
+
+    @property
+    def length(self):
+        return self._payload[2]
           
 class Piece(Message):
     '''Expects index, begin, block as init args'''
     id = 7
 
-class Cancel(Message):
+class Cancel(Request):
     '''Expects index, begin, length as init args'''
     id = 8
 
@@ -111,27 +127,4 @@ def gather_message_from_socket(s):
     msg_body = s.recv(length)
     msg_id = ord(msg_body[0])
     return msg_lookup[msg_id](msg_body[1:])
-
-if __name__ == '__main__':
-    import pprint, socket, main, torrent, torrent_requests, processes
-
-    t = torrent.LiveTorrent('../../../Data/torrentPy/flagfromserver.torrent',main.BitTorrentClient())
-    r = torrent_requests.send_started_announce_request(t)
-    peers = [p for p in processes.make_peers(t,r['peers'])]
-    h = Handshake(t.client.client_id,t.hashed_info)
-    for peer in peers:
-        if peer.ip == '74.212.183.186':
-            continue 
-        pprint.pprint(peer.address)
-        s = socket.socket()
-        s.connect(peer.address)
-        s.send(str(h)) 
-        handshake = gather_handshake_from_socket(s)
-        gen = generate_messages_from_socket(s)
-        messages = [handshake]
-        while True:
-            msg = next(gen)
-            pprint.pprint(msg)
-            messages.append(msg)
-
 

@@ -1,5 +1,5 @@
-import logging, select, socket, config
-from peer import SocketManager, Peer
+import select, socket, config
+from peer import Peer
 from time import time
 from torrent import Torrent
 from collections import defaultdict
@@ -7,13 +7,10 @@ from requests_futures import FuturesSession
 from requests.exceptions import HTTPError
 
 
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
-
 class UnhandledSocketEvent(Exception):
     pass
 
-class BitTorrentClient(SocketManager):
+class BitTorrentClient(object):
     '''Main object encapsulating central info and work flow for the 
     process'''
     
@@ -28,11 +25,7 @@ class BitTorrentClient(SocketManager):
         self.register(s,read=self._accept_connection)
 
         self._http_session = FuturesSession()
-
-        super(BitTorrentClient,self).__init__(s)
-        
-        self._data = {'client_id':config.CLIENT_ID,
-                      'port':port}
+        self._data = {'client_id':config.CLIENT_ID, 'port':port}
         self._torrents = set() 
 
         self._run_loop()
@@ -51,9 +44,9 @@ class BitTorrentClient(SocketManager):
         enqueues a request via socket.'''
         self._torrents.add(Torrent(filename,self))
 
-    def register(self,socket,socket_handlers):
+    def register(self,socket,**socket_handlers):
         '''Register sockets and handlers'''
-        self._handlers[socket.getsockname()] = socket_handlers
+        self._handlers[socket.getsockname()].update(socket_handlers)
 
     def add_timer(self,interval,callback):
         '''Adds a callback to fire in a specified time'''
@@ -63,7 +56,6 @@ class BitTorrentClient(SocketManager):
         '''this instantiates a future object, while binding a handler that will
         be called on a bedecoded result and an error handler that will be called
         on an http error'''
-
         future = self._session.get(url,data)
         self._futures.add((future,handler,e_handler))
 
@@ -82,6 +74,7 @@ class BitTorrentClient(SocketManager):
             self._select_sockets_and_handle()
 
     def _check_timers(self):
+        '''For time- and interval-sensitive callbacks'''
         now = time()
         ready_to_go = {(c,t) for (c,t) in self._timers if t >= now}
 
