@@ -1,8 +1,12 @@
-import datetime, io, socket
+import datetime, io, socket, logging, messages, bitarray, torrent_exceptions
 from hashlib import sha1
 from tracker import TrackerHandler
 from peer import Peer
 from utils import memo, bencode, debencode, prop_and_memo 
+
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
+
 
 class Torrent(object):
     '''Wraps torrent metadata and keeps track of processes'''
@@ -11,21 +15,26 @@ class Torrent(object):
         '''Opens file with context manager'''
         self.client = client
         self.peers = {}
+        self.cached_messages = {}
 
         with io.open(filename,'rb') as f:
             self._data = debencode(f)
 
+        self.have = [0]*self.num_pieces
+        self.frequency = [0]*self.num_pieces
         self.file_mode = 'multi' if 'files' in self.info else 'single'
 
         self.trackers = {TrackerHandler(self,self.announce)} 
-        self.trackers += {TrackerHandler(self,a) for a in 
-                             self._parse_announce_list(self.announce_list)}
+        self.trackers.update({TrackerHandler(self,a) for a in 
+                             self._parse_announce_list(self.announce_list)})
 
         for t in self.trackers:
             t.announce_to_tracker('started')
 
-    def __hash__(self):
-        return self._hashed_info
+        self._message_dispatch = {
+                    messages.Handshake : self._handshake_maker,
+                    messages.Bitfield : self._bitfield_maker
+                }
 
     def __str__(self):
         return '<Torrent tracked at {0}>'.format(self.announce)
@@ -37,8 +46,14 @@ class Torrent(object):
         # just prune tracker, no?
         raise Exception('Handle tracker failure not yet implemented')
 
+    def unregister(self,peer):
+        logger.info('Unregistering peer %s',peer.address)
+        del self.peers[peer.address]
+        self.client.unregister(peer.socket)
+
     @property
     def downloaded(self):
+        return 0
         return sum(len(piece.bytes) for piece in self._dled_pieces) 
 
     @property
@@ -51,7 +66,7 @@ class Torrent(object):
 
     @prop_and_memo
     def info(self):
-        return self.query('info')
+        return self._data['info']
 
     @prop_and_memo
     def hashed_info(self):
@@ -85,23 +100,42 @@ class Torrent(object):
         except KeyError:
             return []
 
+    def update_strategy(self):
+        pass
+
+    def dispatch(self,peer,message_type,*args):
+        '''Handles instructing peers to send messages'''
+        try:
+            try:
+                msg = self._message_dispatch[message_type](peer,args)
+            except KeyError:
+                msg = message_type(args)
+            peer.enqueue_message(msg)
+        except torrent_exceptions.DoNotSendException:
+            pass
+
     def report_peer_addresses(self,peers):
         '''Adds peers if they're not already registered'''
+        logger.info('Found peers %s',peers)
         for peer_address in peers:
-            if peer_address not in self.peers:
+            if peer_address not in self.peers and peer_address[0] != '74.212.183.186':
+                logger.info('Adding peer %s',str(peer_address))
                 s = socket.socket()
                 s.connect(peer_address)    
+                logger.info('Connected to peer %s also known as %s',str(peer_address),str(s.getpeername()))
                 peer = Peer(s,self.client,self)
-                peer.send_handshake()
+                logger.info('Enqueuing Handshake to peer %s',str(peer_address))
+                self.dispatch(peer,messages.Handshake)
+                self.dispatch(peer,messages.Bitfield)
                 self.peers[peer_address] = peer
 
     def _parse_announce_list(self,announce_list):
         '''Recursive method that will make sure to get every possible Tracker 
         out of announce list'''
-        return_set = {}
+        return_set = set()
         for item in announce_list:
             if type(item) is list:
-                return_set += self._parse_announce_list(item)
+                return_set.update(self._parse_announce_list(item))
             else:
                 return_set.add(item)
         return return_set
@@ -121,7 +155,7 @@ class Torrent(object):
         '''Recursive method searching the structure of the tree, will raise
         an index error if nothing is found.'''
         for k,v in tree.items():
-            if k is key:
+            if k == key:
                 return v 
             if type(v) is dict:
                 try:
@@ -132,4 +166,22 @@ class Torrent(object):
             # this pattern ensures that an IndexError is only raised if the 
             # key isn't found at ANY level of recursion
             raise KeyError('{0} not found in torrent data.'.format(key))
+
+    def _handshake_maker(self,peer,*args):
+        try:
+            msg = self._cached_messages[messages.Handshake]
+        except KeyError:
+            msg = self._cached_messages = messages.Handshake(
+                    self.client_id,self.hashed_info)
+        msg.observers = [peer.register_handshake]
+        return msg
+      
+    def _bitfield_maker(self,peer,*args):
+        string = ''.join(str(bit) for bit in self.have) 
+        b = bitarray.bitarray(string)
+        return messages.Bitfield(b.tobytes())   
+    
+    def _request_maker(self,peer,*args):
+        msg = messages.Request(*args)
+        msg.observers = [peer.register_request]
 

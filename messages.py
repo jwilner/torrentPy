@@ -1,3 +1,5 @@
+import config
+from bitarray import bitarray
 from utils import int_to_big_endian, four_bytes_to_int, prop_and_memo
 
 class InvalidMessage(Exception):
@@ -8,32 +10,30 @@ class InvalidHandshake(InvalidMessage):
 
 class Msg(object):
     '''super class'''
-
-    def __init__(self):
-        self.observers = []
-
     def __repr__(self):
         return '{0}({1!s})'.format(self.__class__._name__,self)
 
 class Handshake(Msg):
-    def __init__(self,peerid,info_hash,reserved='\x00\x00\x00\x00\x00\x00\x00\x00',pstr='BitTorrent protocol'):
+    def __init__(self,peerid,info_hash,reserved=config.RESERVED_BYTES,pstr=config.PROTOCOL):
         super(Handshake,self).__init__()
-        self._peerid = peerid
-        self._info_hash = info_hash
-        self._reserved = reserved 
-        self._pstr = pstr
-        self._pstrlen = chr(len(self._pstr))
+        self.peerid = peerid
+        self.info_hash = info_hash
+        self.reserved = reserved 
+        self.pstr = pstr
+        self.pstrlen = chr(len(self.pstr))
 
     def __str__(self):
-        return self._pstrlen + self._pstr + self._reserved + self._info_hash + self._peerid
+        return self.pstrlen + self.pstr + self.reserved + self.info_hash + self.peerid
 
 class Message(Msg):
     id = ''
-
-    def __init__(self,from_string=False,*args):
+    
+    def __init__(self,*args,**kwargs):
         super(Message,self).__init__()
+        from_string = kwargs.pop('from_string',False)
         if from_string:
-            self._string = args
+            print 'Arguments are ',args 
+            self._string = args[0]
         else:
             self._payload = args
 
@@ -60,7 +60,7 @@ class Message(Msg):
 
     @property
     def length_prefix(self):
-        return int_to_big_endian(len(str(self.id)+self._inner_string))
+        return int_to_big_endian(len(str(self.id)+self._formatted_string))
 
 class KeepAlive(Message):
     '''No payload or id'''
@@ -88,7 +88,7 @@ class Have(Message):
 
     @property
     def piece_index(self):
-        return self._parsed_payload[0]
+        return four_bytes_to_int(self._parsed_payload)
 
 class Bitfield(Message):
     '''Expects a bitfield as an init arg'''
@@ -96,8 +96,9 @@ class Bitfield(Message):
 
     @property
     def bitfield(self):
-        # dynamically calculate bitfield and return as list of booleans
-        pass
+        b = bitarray()
+        b.frombytes(self._parsed_payload)
+        return b
 
 class Request(Message):
     '''Expects index, begin, length as init args'''
@@ -117,6 +118,9 @@ class Request(Message):
     @property
     def length(self):
         return self._parsed_payload[2]
+
+    def get_triple(self):
+        return self.index,self.begin,self.length
 
 class Piece(Message):
     '''Expects index, begin, block as init args'''
@@ -146,6 +150,4 @@ class Port(Message):
    id = 9
 
 
-id_to_constructor = {
-        sc.id:sc.__init__ for sc in Message.__subclasses__()
-        }
+lookup = { sc.id:sc for sc in Message.__subclasses__()}

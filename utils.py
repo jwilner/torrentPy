@@ -1,5 +1,5 @@
 from functools import partial
-import struct
+import struct, torrent_exceptions, io
 
 def memo(f):
     cache = {}
@@ -87,10 +87,19 @@ def int_to_big_endian(integer):
     return struct.pack('>i',integer)
 
 def parse_peer_string(p_string):
+    peers = []
     for p in (p_string[i:i+6] for i in range(0,len(p_string),6)):
         ip = '.'.join(str(ord(ip_part)) for ip_part in p[:4])
         port = 256*(ord(p[4]))+ord(p[5])
-        yield (ip,port) 
+        peers.append((ip,port))
+    return peers
+
+class StreamReader(io.BytesIO):
+    def read(self,n=None):
+        text = super(StreamReader,self).read(n) 
+        if n and len(text) is not n:
+            raise torrent_exceptions.RanDryException(value=text)
+        return text
 
 if __name__ == '__main__':
     import sys,pprint,io

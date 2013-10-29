@@ -1,5 +1,6 @@
 import config, io
 from utils import debencode, parse_peer_string, prop_and_memo
+import urllib
 
 class TrackerHandler(object):
     '''Represents the http tracker server and handles interactions
@@ -7,7 +8,7 @@ class TrackerHandler(object):
 
     def __init__(self,torrent,announce_url):
         self.announce_url = announce_url
-        self._torrent = torrent
+        self.torrent = torrent
         self.client = torrent.client
         self.data = {}
         
@@ -33,7 +34,7 @@ class TrackerHandler(object):
         torrent'''
 
         info = debencode(io.BytesIO(response.content)) 
-        if 'failure reason' or 'warning message' in info:
+        if 'failure reason' in info or 'warning message' in info:
             self.torrent.handle_tracker_failure(self,info) 
         else:
             self.act_on_response(info)
@@ -42,7 +43,6 @@ class TrackerHandler(object):
         '''Separated out from handle_response so it can be used as a callback
         after a warning message mebbe?'''
         self.data.update(info)
-         
         # register new announce with client at next appropriate time
         self.client.add_timer(self.interval,self.announce_to_tracker)
         self.torrent.report_peer_addresses(self.peer_addresses)
