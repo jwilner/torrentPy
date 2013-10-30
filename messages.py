@@ -1,6 +1,6 @@
 import config
 from bitarray import bitarray
-from utils import int_to_big_endian, four_bytes_to_int, prop_and_memo
+from utils import int_to_big_endian, four_bytes_to_int, prop_and_memo, memo
 
 class InvalidMessage(Exception):
     pass
@@ -11,19 +11,19 @@ class InvalidHandshake(InvalidMessage):
 class Msg(object):
     '''super class'''
     def __repr__(self):
-        return '{0}({1!s})'.format(self.__class__._name__,self)
+        return '{0}'.format(type(self))
 
 class Handshake(Msg):
     def __init__(self,peerid,info_hash,reserved=config.RESERVED_BYTES,pstr=config.PROTOCOL):
         super(Handshake,self).__init__()
-        self.peerid = peerid
+        self.peer_id = peerid
         self.info_hash = info_hash
         self.reserved = reserved 
         self.pstr = pstr
         self.pstrlen = chr(len(self.pstr))
 
     def __str__(self):
-        return self.pstrlen + self.pstr + self.reserved + self.info_hash + self.peerid
+        return self.pstrlen + self.pstr + self.reserved + self.info_hash + self.peer_id
 
 class Message(Msg):
     id = ''
@@ -31,36 +31,45 @@ class Message(Msg):
     def __init__(self,*args,**kwargs):
         super(Message,self).__init__()
         from_string = kwargs.pop('from_string',False)
+
         if from_string:
-            print 'Arguments are ',args 
             self._string = args[0]
         else:
             self._payload = args
 
+    @memo
     def __str__(self):
-        return ''.join(str(x) for x in (self.length_prefix,self.id)) + self._formatted_string       
+        body = '{0}{1}'.format(self._encoded_id(),self.string)
+        strlen = int_to_big_endian(len(body))
+        return '{0}{1}'.format(strlen,body)
 
     @prop_and_memo
-    def _formatted_string(self):
+    def string(self):
+        '''the body of the message as a string'''
         try:
             return self._string
         except AttributeError:
-            return ''.join(str(x) for x in self._parsed_payload)
+            self._string = self._parse_payload()
+            return self._string
 
     @prop_and_memo
-    def _parsed_payload(self):
+    def payload(self):
+        '''the body of the message as a list'''
         try:
             return self._payload
-        except AttributeError:
-            try:
-                parse = self._parse
-                return parse(self._string)
-            except AttributeError:
-                return self._string
+        except:
+            self._payload = self._parse_string()
+            return self._payload
 
-    @property
-    def length_prefix(self):
-        return int_to_big_endian(len(str(self.id)+self._formatted_string))
+    def _parse_string(self):
+        return []
+
+    def _parse_payload(self):
+        return ''
+
+    @memo
+    def _encoded_id(self):
+        return chr(self.id)
 
 class KeepAlive(Message):
     '''No payload or id'''
@@ -88,7 +97,10 @@ class Have(Message):
 
     @property
     def piece_index(self):
-        return four_bytes_to_int(self._parsed_payload)
+        return four_bytes_to_int(self.payload)
+
+    def _parse_string(self):
+        return self._string
 
 class Bitfield(Message):
     '''Expects a bitfield as an init arg'''
@@ -97,49 +109,63 @@ class Bitfield(Message):
     @property
     def bitfield(self):
         b = bitarray()
-        b.frombytes(self._parsed_payload)
+        b.frombytes(self.payload)
         return b
+
+    def _parse_string(self):
+        return self._string
+
+    def _parse_payload(self):
+        return self.bitfield.tobytes()
 
 class Request(Message):
     '''Expects index, begin, length as init args'''
     id = 6
 
-    def _parse(self,m): 
-        return [four_bytes_to_int(m[i:i+4]) for i in (0,4,8)]
-
     @property
     def index(self):
-        return self._parsed_payload[0]
+        return self.payload[0]
 
     @property
     def begin(self):
-        return self._parsed_payload[1]
+        return self.payload[1]
 
     @property
     def length(self):
-        return self._parsed_payload[2]
+        return self.payload[2]
 
     def get_triple(self):
         return self.index,self.begin,self.length
+
+    def _parse_string(self): 
+        return [four_bytes_to_int(self._string[i:i+4]) for i in (0,4,8)]
+
+    def _parse_payload(self):
+        print 'Called here'
+        return ''.join(int_to_big_endian(i) for i in self._payload)
 
 class Piece(Message):
     '''Expects index, begin, block as init args'''
     id = 7
 
-    def _parse(self,m):
-        return [four_bytes_to_int(m[i:i+4]) for i in (0,4)]+[m[8:]]
-
     @property
     def index(self):
-        return self._parsed_payload[0]
+        return self.payload[0]
 
     @property
     def begin(self):
-        return self._parsed_payload[1]
+        return self.payload[1]
 
     @property
     def block(self):
-        return self._parsed_payload[2]
+        return self.payload[2]
+
+    def _parse_string(self):
+        return [four_bytes_to_int(self._string[i:i+4]) for i in (0,4)]+[self._string[8:]]
+
+    def _parse_payload(self):
+        return ''.join(int_to_big_endian(i) for i in self._payload) 
+
 
 class Cancel(Request): # employs same payload as Request
     '''Expects index, begin, length as init args'''

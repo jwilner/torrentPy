@@ -1,4 +1,7 @@
 
+class DoNotSendException(Exception):
+    pass
+
 class LeftoverException(Exception):
     def __init__(self,message='',value=None):
         self.leftover = value

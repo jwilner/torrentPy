@@ -1,4 +1,4 @@
-import datetime, io, socket, logging, messages, bitarray, torrent_exceptions
+import datetime, io, socket, logging, messages, bitarray, strategies, torrent_exceptions
 from hashlib import sha1
 from tracker import TrackerHandler
 from peer import Peer
@@ -15,13 +15,18 @@ class Torrent(object):
         '''Opens file with context manager'''
         self.client = client
         self.peers = {}
-        self.cached_messages = {}
+        self._cached_messages = {}
 
         with io.open(filename,'rb') as f:
             self._data = debencode(f)
 
         self.have = [0]*self.num_pieces
         self.frequency = [0]*self.num_pieces
+        self.piece_record = {i: 0 for i in range(self.num_pieces)}
+
+        self.strategy = strategies.RandomPieceStrategy(self)
+        self.strategy_interval = 1.05
+
         self.file_mode = 'multi' if 'files' in self.info else 'single'
 
         self.trackers = {TrackerHandler(self,self.announce)} 
@@ -35,6 +40,8 @@ class Torrent(object):
                     messages.Handshake : self._handshake_maker,
                     messages.Bitfield : self._bitfield_maker
                 }
+
+        self.client.add_timer(self.strategy_interval,self.act_on_strategy)
 
     def __str__(self):
         return '<Torrent tracked at {0}>'.format(self.announce)
@@ -100,16 +107,18 @@ class Torrent(object):
         except KeyError:
             return []
 
-    def update_strategy(self):
-        pass
+    def act_on_strategy(self):
+        logger.info('Acting on strategy...')
+        self.strategy.act()
+        self.client.add_timer(self.strategy_interval,self.act_on_strategy)
 
     def dispatch(self,peer,message_type,*args):
         '''Handles instructing peers to send messages'''
         try:
             try:
-                msg = self._message_dispatch[message_type](peer,args)
+                msg = self._message_dispatch[message_type](peer,*args)
             except KeyError:
-                msg = message_type(args)
+                msg = message_type(*args)
             peer.enqueue_message(msg)
         except torrent_exceptions.DoNotSendException:
             pass
@@ -118,7 +127,7 @@ class Torrent(object):
         '''Adds peers if they're not already registered'''
         logger.info('Found peers %s',peers)
         for peer_address in peers:
-            if peer_address not in self.peers and peer_address[0] != '74.212.183.186':
+            if peer_address not in self.peers and peer_address[0] != '74.212.183.186' and peer_address[0] != '72.229.191.53':
                 logger.info('Adding peer %s',str(peer_address))
                 s = socket.socket()
                 s.connect(peer_address)    
@@ -172,16 +181,14 @@ class Torrent(object):
             msg = self._cached_messages[messages.Handshake]
         except KeyError:
             msg = self._cached_messages = messages.Handshake(
-                    self.client_id,self.hashed_info)
-        msg.observers = [peer.register_handshake]
+                    self.client.client_id,self.hashed_info)
+        msg.observers = [peer.record_handshake]
         return msg
       
     def _bitfield_maker(self,peer,*args):
+        if not any(self.have):
+            raise torrent_exceptions.DoNotSendException
         string = ''.join(str(bit) for bit in self.have) 
         b = bitarray.bitarray(string)
-        return messages.Bitfield(b.tobytes())   
-    
-    def _request_maker(self,peer,*args):
-        msg = messages.Request(*args)
-        msg.observers = [peer.register_request]
-
+        msg =  messages.Bitfield(b.tobytes())   
+        return msg

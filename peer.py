@@ -1,4 +1,4 @@
-import messages, config, torrent_exceptions, logging
+import pprint,messages, config, torrent_exceptions, logging, socket
 from time import time
 from collections import deque
 from functools import partial
@@ -66,9 +66,9 @@ class Peer(object):
                 }
 
         self._sent_callbacks = {
-            messages.Handshake : self._record_handshake,
-            messages.Request : self._record_request,
-            messages.Cancel : self._record_cancel,
+            messages.Handshake : self.record_handshake,
+            messages.Request : self.record_request,
+            messages.Cancel : self.record_cancel,
             messages.Choke : lambda m : am_choking_setter(True),
             messages.Unchoke : lambda m : am_choking_setter(False),
             messages.Interested : lambda m : am_interested_setter(True),
@@ -97,6 +97,11 @@ class Peer(object):
     def torrent(self):
         return self._torrent
 
+    @property
+    def wanted_pieces(self):
+        # I want this to be a generator, but 
+        return {i for i,v in enumerate(self.has) if v and not self.torrent.have[i]}
+
     @torrent.setter
     def torrent(self,t):
         '''stuff to do at time of torrent assignment'''
@@ -112,27 +117,26 @@ class Peer(object):
             except KeyError:
                 # e.g. for KeepAlive message or any unimplemented handlers
                 continue
-        self.torrent.look_at(self)
 
     def handle_outgoing(self):
-        try:
-            self.socket.sendall(''.join(str(msg) for msg in self.outbox))
-            self.last_spoke_to = time()
-            for msg in self.outbox:
-                try:
-                    self._sent_callbacks[type(msg)](msg)
-                except KeyError: #no callback
-                    continue
-            self.outbox = deque()
-        except IndexError: #queue empty
-            pass
+        strung = ''.join(str(msg) for msg in self.outbox)
+        self.socket.sendall(strung)
+        self.last_spoke_to = time()
+        for msg in self.outbox:
+            logger.info('Just sent %s %s to %s',type(msg),str(msg),self.socket.getpeername())
+            try:
+                self._sent_callbacks[type(msg)](msg)
+            except KeyError: #no callback
+                continue
+        self.outbox = deque()
 
     def handle_socket_error(self):
         raise Exception('Not yet implemented')
 
     def enqueue_message(self,msg):
         # if outbox is currently empty, then tell the client
-        notify = not bool(self.outbox)
+        logger.info('Enqueuing %s',msg)
+        notify = not self.outbox
         self.outbox.append(msg)
         if notify:
             self.client.waiting_to_write.add(self.socket)
@@ -165,6 +169,8 @@ class Peer(object):
                 yield self._parse_string_to_message(stream)
         except torrent_exceptions.LeftoverException as e:
             self._read_buffer = e.leftover
+        except socket.error as e:
+            raise e
 
     def _parse_string_to_message(self,stream):
         if not self.handshake['received']:
@@ -205,6 +211,8 @@ class Peer(object):
         self.handshake['sent'] = True
 
     def record_request(self,msg):
+        print 'Sent a request '
+        pprint.pprint(str(msg))
         self.outstanding_requests.add(msg.get_triple())
 
     def record_cancel(self,msg):
