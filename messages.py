@@ -23,7 +23,8 @@ class Handshake(Msg):
         self.pstrlen = chr(len(self.pstr))
 
     def __str__(self):
-        return self.pstrlen + self.pstr + self.reserved + self.info_hash + self.peer_id
+        msg =  self.pstrlen + self.pstr + self.reserved + self.info_hash + self.peer_id
+        return msg
 
 class Message(Msg):
     id = ''
@@ -41,7 +42,9 @@ class Message(Msg):
     def __str__(self):
         body = '{0}{1}'.format(self._encoded_id(),self.string)
         strlen = int_to_big_endian(len(body))
-        return '{0}{1}'.format(strlen,body)
+        msg = '{0}{1}'.format(strlen,body)
+        print 'This {0} is {1} characters long.'.format(type(self),len(msg))
+        return msg
 
     @prop_and_memo
     def string(self):
@@ -141,8 +144,10 @@ class Request(Message):
         return [four_bytes_to_int(self._string[i:i+4]) for i in (0,4,8)]
 
     def _parse_payload(self):
-        print 'Called here'
         return ''.join(int_to_big_endian(i) for i in self._payload)
+
+    def __repr__(self):
+        return '<Request for piece {0} beginning at {1} with length {2} >'.format(self.index,self.begin,self.length)
 
 class Piece(Message):
     '''Expects index, begin, block as init args'''
@@ -165,6 +170,9 @@ class Piece(Message):
 
     def _parse_payload(self):
         return ''.join(int_to_big_endian(i) for i in self._payload) 
+
+    def __repr__(self):
+        return '<Piece message for piece {0} beginning at {1} with length {2} >'.format(self.index,self.begin,len(self.block))
 
 
 class Cancel(Request): # employs same payload as Request

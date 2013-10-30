@@ -140,9 +140,11 @@ class BitTorrentClient(object):
                                             self.waiting_to_write,
                                             self._listen_to,0.05)
 
+        logger.info('Read %d; Write %d;',len(read),len(write))
         for event,socktype in (('read',read),
                                ('write',write)):
             for sock in socktype:
+                logger.info('Handling %s event',event)
                 try:
                     self._handlers[sock][event]()
                 except KeyError:

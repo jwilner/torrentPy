@@ -22,7 +22,9 @@ class Torrent(object):
 
         self.have = [0]*self.num_pieces
         self.frequency = [0]*self.num_pieces
-        self.piece_record = {i: 0 for i in range(self.num_pieces)}
+
+        # tuple information pointing to filename maybe? 
+        self.piece_record = {i: {} for i in range(self.num_pieces)} 
 
         self.strategy = strategies.RandomPieceStrategy(self)
         self.strategy_interval = 1.05
@@ -88,6 +90,18 @@ class Torrent(object):
             return str(sum(int(f['length']) for f in self.query('files')))
 
     @prop_and_memo
+    def piece_lengths(self):
+        piece_lengths = [self.piece_length] * self.num_pieces
+        last = self.total_length % self.piece_length
+        if last != 0:
+            piece_lengths[-1] = last
+        return piece_lengths
+
+    @prop_and_memo
+    def piece_length(self):
+        return self.query('piece length')
+
+    @prop_and_memo
     def pieces(self):
         '''Returns a list of the hash codes for each piece, divided by length 
         20'''
@@ -110,6 +124,7 @@ class Torrent(object):
     def act_on_strategy(self):
         logger.info('Acting on strategy...')
         self.strategy.act()
+        logger.info('Done acting on strategy...')
         self.client.add_timer(self.strategy_interval,self.act_on_strategy)
 
     def dispatch(self,peer,message_type,*args):
@@ -137,6 +152,52 @@ class Torrent(object):
                 self.dispatch(peer,messages.Handshake)
                 self.dispatch(peer,messages.Bitfield)
                 self.peers[peer_address] = peer
+
+    def handle_block(self,piece_msg):
+        index,begin,data = piece_msg.payload 
+        coords = begin,len(data) 
+        print 'We\'re dealing with a blcok with these coordinates ',coords
+        print 'This index has these current coords ',self.piece_record[index]
+        if coords in self.piece_record[index]:
+            return
+        self.piece_record[index][coords] = data # write data to disk here?
+        this_piece = sorted(self.piece_record[index].keys())
+
+        _,l_end = this_piece[0]
+        print 'Block begins at {0} and ends at {1}'.format(_,l_end)
+        for begin,end in this_piece[1:]:
+            print 'Block begins at {0} and ends at {1} and {2}'.format(begin,end,l_end)
+            if l_end != begin:
+                break
+            l_end = end     
+        else:
+            print self.piece_lengths[index], l_end
+            if self.piece_lengths[index] == begin+l_end:
+                self._complete_piece_procedure(index)
+
+    def _complete_piece_procedure(self,index):
+        keys = sorted(self.piece_record[index].keys())
+        joined = ''.join(self.piece_record[index][k] for k in keys)
+        print 'String is ', len(joined), ' long'
+        hashed = sha1(joined).digest()
+        print hashed
+        if hashed != self.pieces[index]:
+            if hashed not in self.pieces:
+                self.piece_record[index] = {}
+            print 'Hashed info for index is at ',self.pieces.index(hashed)
+
+        self.have[index] = 1
+        print 'WE HAVE DEFINITELY RECEIVED PART {0}'.format(index)
+        print self.have
+        if len(filter(None,(h == 1 for h in self.have))) == 78:
+            print 'Hit final loop'
+            with open('testfile.jpg','wb+') as f:
+                for key in sorted(self.piece_record.keys()):
+                    for coords in sorted(self.piece_record[key]):
+                        print 'Writing...'
+                        f.write(self.piece_record[key][coords])
+            raise torrent_exceptions.TorrentComplete
+        self.strategy.have_event(index)
 
     def _parse_announce_list(self,announce_list):
         '''Recursive method that will make sure to get every possible Tracker 

@@ -100,7 +100,7 @@ class Peer(object):
     @property
     def wanted_pieces(self):
         # I want this to be a generator, but 
-        return {i for i,v in enumerate(self.has) if v and not self.torrent.have[i]}
+        return {i for i,v in enumerate(self.has) if v and not self.torrent.have[i] and i != 78}
 
     @torrent.setter
     def torrent(self,t):
@@ -109,10 +109,11 @@ class Peer(object):
         self.has = [0]*t.num_pieces
 
     def handle_incoming(self):
+        logger.info('Handling incoming...')
         self.last_heard_from = time()
         for msg in self._read_from_socket():
             try:
-                logger.info('Received a %s message from %s',type(msg),self.socket.getpeername())
+                logger.info('Received a %s message from %s',repr(msg),self.socket.getpeername())
                 self._message_handlers[type(msg)](msg)
             except KeyError:
                 # e.g. for KeepAlive message or any unimplemented handlers
@@ -162,7 +163,6 @@ class Peer(object):
     def _read_from_socket(self):
         new_string = self.socket.recv(config.DEFAULT_READ_AMOUNT)
         stream = StreamReader(self._read_buffer + new_string)
-        self._read_buffer = ''
 
         try:
             while True:
@@ -184,7 +184,7 @@ class Peer(object):
             parts.append(stream.read(4))
             bytes_length_prefix = parts[0] 
             length = four_bytes_to_int(bytes_length_prefix)
-            if length is 0:
+            if length == 0:
                 return messages.KeepAlive()
             parts.append(stream.read(length))
             msg_body = parts[1]
@@ -213,10 +213,10 @@ class Peer(object):
     def record_request(self,msg):
         print 'Sent a request '
         pprint.pprint(str(msg))
-        self.outstanding_requests.add(msg.get_triple())
+        self.outstanding_requests.add(msg.get_triple()[:2])
 
     def record_cancel(self,msg):
-        self.outstanding_requests.discard(msg.get_triples())
+        self.outstanding_requests.discard(msg.get_triples()[:2])
 
     def _process_handshake(self,msg):
         self.handshake['received'] = True
@@ -274,4 +274,7 @@ class Peer(object):
 
     def _process_piece(self,msg):
         # do something in this context?
-        self.torrent.add_block(msg)
+        print 'Processing {0}'.format(repr(msg))
+        self.outstanding_requests.discard((msg.index,msg.begin))
+        self.torrent.handle_block(msg)
+

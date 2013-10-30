@@ -97,7 +97,7 @@ def parse_peer_string(p_string):
 class StreamReader(io.BytesIO):
     def read(self,n=None):
         text = super(StreamReader,self).read(n) 
-        if n and len(text) is not n:
+        if n and len(text) != n:
             raise torrent_exceptions.RanDryException(value=text)
         return text
 

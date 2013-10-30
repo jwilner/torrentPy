@@ -1,4 +1,4 @@
-import messages, random, config
+import messages, random, config, torrent_exceptions
 
 '''Strategy objects would be chosen based on the current state of the
 local torrent, while the strategy object makes decisions about actions for 
@@ -12,6 +12,10 @@ class Strategy(object):
 
     def act(self):
         pass
+
+    def have_event(self,index):
+        for peer in self._torrent.peers.values():
+            self._torrent.dispatch(peer,messages.Have,index)
 
     def _get_rarest_desirable_pieces(self):
         '''Outstanding pieces that are still required '''
@@ -48,11 +52,12 @@ class RandomPieceStrategy(Strategy):
 
         for peer in self._get_priority_peers():
             for i,p_index in enumerate(peer.wanted_pieces):
-                if i == 2:
-                    break
-                print p_index,0,config.MAX_REQUEST_AMOUNT
+                if self._torrent.piece_record[p_index]:
+                    block_index = max(self._torrent.piece_record[p_index].keys(),key=lambda x:x[1])[1]
+                else:
+                    block_index = 0
                 self._torrent.dispatch(peer,messages.Request,
-                                            p_index,0,config.MAX_REQUEST_AMOUNT)
+                                            p_index,block_index,config.MAX_REQUEST_AMOUNT)
 
     def choose_random_piece(self,n):
         return random.shuffle([k for k,v in self._torrent.piece_record.items()

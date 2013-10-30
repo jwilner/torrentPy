@@ -14,3 +14,6 @@ class RanDryException(Exception):
 
 class InvalidMessageError(Exception):
     pass
+
+class TorrentComplete(Exception):
+    pass
