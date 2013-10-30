@@ -91,8 +91,7 @@ class BitTorrentClient(object):
             sock, address = self._socket.accept()
             logger.info('Connecting at %s.',address) 
             # b/c no torrent included yet, will require handshake
-            peer = Peer(sock,self)
-            self.register(sock,peer.socket_handlers)
+            Peer(sock,self) # __init__ registers peer with torrent
         except socket.error as e:
             print 'socket error in accept connection ',e
 
@@ -136,6 +135,7 @@ class BitTorrentClient(object):
         '''Use select interface to get prepared sockets, and then
         call the registered handlers.'''
         logger.info('Checking sockets: %s %s',len(self._listen_to),len(self.waiting_to_write))
+
         read, write, error = select.select(self._listen_to,
                                             self.waiting_to_write,
                                             self._listen_to,0.05)
