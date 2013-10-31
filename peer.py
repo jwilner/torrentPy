@@ -1,4 +1,4 @@
-import pprint,messages, config, torrent_exceptions, logging, socket
+import messages, config, torrent_exceptions, logging, socket
 from time import time
 from collections import deque
 from functools import partial
@@ -25,7 +25,7 @@ class Peer(object):
         self._torrent = torrent
         
         if torrent:
-            self.has = [False]*torrent.num_pieces
+            self.has = [0]*torrent.num_pieces
 
         self.client.register(self.socket,
                                 read=self.handle_incoming,
@@ -52,7 +52,7 @@ class Peer(object):
 
         # Don't need to define a handler for KeepAlive, because undefined 
         # messages fail silently but still update 'last_heard_from'
-        self._message_handlers = {
+        self._local_receipt_callbacks = {
             messages.Handshake : self._process_handshake,
             messages.Choke : lambda x : choking_me_setter(True),
             messages.Unchoke : lambda x : choking_me_setter(False),
@@ -81,6 +81,10 @@ class Peer(object):
     def __str__(self):
         return '<Peer for {0!s} at {1!s}:{2!s}>'.format(
                 self.torrent, self.ip, self.port)
+    
+    def receipt_callback(self,peer,msg):
+        '''Just dispatches with private strategy object''' 
+        return self._strategy[type(msg)](peer,msg)
 
     @property
     def choking_me(self):
@@ -111,13 +115,23 @@ class Peer(object):
     def handle_incoming(self):
         logger.info('Handling incoming...')
         self.last_heard_from = time()
+
+        callback_args = (
+                (self._local_receipt_callbacks,()),
+                (self._torrent.receipt_callbacks,(self)),
+                (self._torrent.strategy.receipt_callbacks,(self))    
+            )
+
         for msg in self._read_from_socket():
-            try:
-                logger.info('Received a %s message from %s',repr(msg),self.socket.getpeername())
-                self._message_handlers[type(msg)](msg)
-            except KeyError:
-                # e.g. for KeepAlive message or any unimplemented handlers
-                continue
+            msg_type = type(msg)
+            for callback_dispatch, extra_args in callback_args:
+                try:
+                    callback_dispatch[msg_type](msg,*extra_args)
+                except torrent_exceptions.FatallyFlawedMessage as e:
+                    self.strategy.handle_exception(e)
+                except KeyError:
+                    # e.g. for KeepAlive message or any unimplemented handlers
+                    pass
 
     def handle_outgoing(self):
         strung = ''.join(str(msg) for msg in self.outbox)
@@ -125,28 +139,35 @@ class Peer(object):
         self.last_spoke_to = time()
         for msg in self.outbox:
             logger.info('Just sent %s %s to %s',type(msg),str(msg),self.socket.getpeername())
+
             try:
                 self._sent_callbacks[type(msg)](msg)
             except KeyError: #no callback
                 continue
+            except torrent_exceptions.FatallyFlawedMessage as e:
+                # should usually drop this peer, but will leave decision to strategy
+                self.strategy.handle_exception(e,msg,self)
+
         self.outbox = deque()
 
     def handle_socket_error(self):
         raise Exception('Not yet implemented')
 
     def enqueue_message(self,msg):
-        # if outbox is currently empty, then tell the client
         logger.info('Enqueuing %s',msg)
+
+        # if outbox is currently empty, then we'll want to tell the client
         notify = not self.outbox
         self.outbox.append(msg)
-        if notify:
+
+        if notify: # tell client
             self.client.waiting_to_write.add(self.socket)
 
     def drop(self):
         '''Procedure to disconnect from peer'''
         self.active = False
         self.socket.close()
-        self.torrent.unregister(self)
+        self.torrent.drop_peer(self)
 
     @prop_and_memo
     def address(self):
@@ -211,8 +232,6 @@ class Peer(object):
         self.handshake['sent'] = True
 
     def record_request(self,msg):
-        print 'Sent a request '
-        pprint.pprint(str(msg))
         self.outstanding_requests.add(msg.get_triple()[:2])
 
     def record_cancel(self,msg):
@@ -238,17 +257,16 @@ class Peer(object):
 
     def _process_have(self,msg):
         self.has[msg.piece_index] = 1 
-        self.torrent.frequency[msg.piece_index] += 1
 
     def _process_bitfield(self,msg):
-        q,r = divmod(self.torrent.num_pieces,8)
-        req_len = (q+1)*8 if r != 0 else q*8
-        logger.info('%d required and %d received.',req_len,len(msg.bitfield))
+        quotient, remainder = divmod(self.torrent.num_pieces,8)
+
+        # this appropriately rounds up the required length of the bitfield
+        req_len = (quotient+1)*8 if remainder != 0 else quotient*8
 
         if len(msg.bitfield) != req_len:
-            logger.info('Got a busted bitfield from someone')
-            # initiate dropping procedure
-            self.drop()
+            e = torrent_exceptions.FatallyFlawedMessage()
+            e.peer, e.msg = self, msg
 
         for i,p in enumerate(msg.bitfield):
             try:
@@ -274,7 +292,4 @@ class Peer(object):
 
     def _process_piece(self,msg):
         # do something in this context?
-        print 'Processing {0}'.format(repr(msg))
         self.outstanding_requests.discard((msg.index,msg.begin))
-        self.torrent.handle_block(msg)
-

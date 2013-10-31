@@ -1,6 +1,5 @@
 import config, io
 from utils import debencode, parse_peer_string, prop_and_memo
-import urllib
 
 class TrackerHandler(object):
     '''Represents the http tracker server and handles interactions
@@ -11,16 +10,20 @@ class TrackerHandler(object):
         self.torrent = torrent
         self.client = torrent.client
         self.data = {}
-        
+        self.active = False 
         # if these keys are present in data, they will be included in queries
         self._optional_params = {'numwant','key','trackerid','tracker id'}
 
-    def announce_to_tracker(self,event=None):
+    def announce(self,event=None):
         '''Registers an HTTP request to the tracker server'''
         request_params = self.announce_params
 
         if event:
             request_params['event'] = event
+            if event == 'started':
+                self.active = True
+            elif event == 'closed':
+                self.active = False
 
         self.client.make_tracker_request(
                 self.announce_url,
@@ -43,7 +46,9 @@ class TrackerHandler(object):
         '''Separated out from handle_response so it can be used as a callback
         after a warning message mebbe?'''
         self.data.update(info)
+
         # register new announce with client at next appropriate time
+
         self.client.add_timer(self.interval,self.announce_to_tracker)
         self.torrent.report_peer_addresses(self.peer_addresses)
 

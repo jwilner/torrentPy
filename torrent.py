@@ -1,6 +1,6 @@
-import datetime, io, socket, logging, messages, bitarray, strategies, torrent_exceptions
+import datetime, io, socket, logging, messages, config
+import bitarray, torrent_exceptions, strategies
 from hashlib import sha1
-from tracker import TrackerHandler
 from peer import Peer
 from utils import memo, bencode, debencode, prop_and_memo 
 
@@ -16,6 +16,7 @@ class Torrent(object):
         self.client = client
         self.peers = {}
         self._cached_messages = {}
+        self._trackers = set()
 
         with io.open(filename,'rb') as f:
             self._data = debencode(f)
@@ -26,36 +27,36 @@ class Torrent(object):
         # tuple information pointing to filename maybe? 
         self.piece_record = {i: {} for i in range(self.num_pieces)} 
 
-        self.strategy = strategies.RandomPieceStrategy(self)
-        self.strategy_interval = 1.05
-
         self.file_mode = 'multi' if 'files' in self.info else 'single'
 
-        self.trackers = {TrackerHandler(self,self.announce)} 
-        self.trackers.update({TrackerHandler(self,a) for a in 
-                             self._parse_announce_list(self.announce_list)})
+        self._strategy_manager = strategies.StrategyManager(config.DEFAULT_STRATEGY_SET)
+        self._strategy_manager.update(strategies.INIT_EVENT)
 
-        for t in self.trackers:
-            t.announce_to_tracker('started')
+        # instantiate strategy with strategy_manager
+        self.strategy = self._strategy_manager.current(self)
 
+        self.strategy.init_callback()
         self._message_dispatch = {
                     messages.Handshake : self._handshake_maker,
                     messages.Bitfield : self._bitfield_maker
                 }
+        
+        self.receipt_callbacks = {
+            messages.Have : self._increment_frequency,
+            messages.Bitfield : self._increment_frequency, 
+                }
 
-        self.client.add_timer(self.strategy_interval,self.act_on_strategy)
+        self.exception_handlers = {
+                }
 
     def __str__(self):
         return '<Torrent tracked at {0}>'.format(self.announce)
 
-    def handle_tracker_error(self,response):
-        raise Exception('Handle tracker error not yet implemented')
+    def _increment_frequency(self,msg):
+        self.frequency[msg.piece_index] += 1
 
-    def handle_tracker_failure(self,tracker,response):
-        # just prune tracker, no?
-        raise Exception('Handle tracker failure not yet implemented')
-
-    def unregister(self,peer):
+    def drop_peer(self,peer):
+        '''Procedure to disconnect from peer'''
         logger.info('Unregistering peer %s',peer.address)
         del self.peers[peer.address]
         self.client.unregister(peer.socket)
@@ -72,6 +73,11 @@ class Torrent(object):
     @prop_and_memo
     def announce(self):
         return self.query('announce')
+
+    @prop_and_memo
+    def all_announce_urls(self):
+        return [self.annouce]+self._parse_announce_list(self.announce_list)
+
 
     @prop_and_memo
     def info(self):
@@ -121,12 +127,6 @@ class Torrent(object):
         except KeyError:
             return []
 
-    def act_on_strategy(self):
-        logger.info('Acting on strategy...')
-        self.strategy.act()
-        logger.info('Done acting on strategy...')
-        self.client.add_timer(self.strategy_interval,self.act_on_strategy)
-
     def dispatch(self,peer,message_type,*args):
         '''Handles instructing peers to send messages'''
         try:
@@ -136,79 +136,77 @@ class Torrent(object):
                 msg = message_type(*args)
             peer.enqueue_message(msg)
         except torrent_exceptions.DoNotSendException:
+            # for example, stops us from sending a bitfield when we have nothing?
             pass
 
     def report_peer_addresses(self,peers):
         '''Adds peers if they're not already registered'''
         logger.info('Found peers %s',peers)
         for peer_address in peers:
-            if peer_address not in self.peers and peer_address[0] != '74.212.183.186' and peer_address[0] != '72.229.191.53':
+            if self.strategy.make_peer_test(peer_address):
                 logger.info('Adding peer %s',str(peer_address))
                 s = socket.socket()
                 s.connect(peer_address)    
-                logger.info('Connected to peer %s also known as %s',str(peer_address),str(s.getpeername()))
-                peer = Peer(s,self.client,self)
-                logger.info('Enqueuing Handshake to peer %s',str(peer_address))
-                self.dispatch(peer,messages.Handshake)
-                self.dispatch(peer,messages.Bitfield)
+                peer = Peer(s,self._client,self)
                 self.peers[peer_address] = peer
+                self.strategy.new_peer_callback(peer)
+
+    def receive_peer_message(self,peer,msg):
+        self.strategy.receipt_callback(peer,msg)
 
     def handle_block(self,piece_msg):
         index,begin,data = piece_msg.payload 
         coords = begin,len(data) 
-        print 'We\'re dealing with a blcok with these coordinates ',coords
-        print 'This index has these current coords ',self.piece_record[index]
         if coords in self.piece_record[index]:
             return
         self.piece_record[index][coords] = data # write data to disk here?
+
+        if self._is_piece_complete(index):
+            self._complete_piece_callback(index)
+
+    def _is_piece_complete(self,index):
         this_piece = sorted(self.piece_record[index].keys())
-
         _,l_end = this_piece[0]
-        print 'Block begins at {0} and ends at {1}'.format(_,l_end)
         for begin,end in this_piece[1:]:
-            print 'Block begins at {0} and ends at {1} and {2}'.format(begin,end,l_end)
             if l_end != begin:
-                break
+                return False
             l_end = end     
-        else:
-            print self.piece_lengths[index], l_end
-            if self.piece_lengths[index] == begin+l_end:
-                self._complete_piece_procedure(index)
+         
+        return self.piece_lengths[index] == begin+l_end
 
-    def _complete_piece_procedure(self,index):
+    def _verify_piece_hash(self,index):
         keys = sorted(self.piece_record[index].keys())
         joined = ''.join(self.piece_record[index][k] for k in keys)
-        print 'String is ', len(joined), ' long'
         hashed = sha1(joined).digest()
-        print hashed
-        if hashed != self.pieces[index]:
-            if hashed not in self.pieces:
-                self.piece_record[index] = {}
-            print 'Hashed info for index is at ',self.pieces.index(hashed)
+        return hashed in self.pieces
 
-        self.have[index] = 1
-        print 'WE HAVE DEFINITELY RECEIVED PART {0}'.format(index)
-        print self.have
-        if len(filter(None,(h == 1 for h in self.have))) == 78:
-            print 'Hit final loop'
-            with open('testfile.jpg','wb+') as f:
-                for key in sorted(self.piece_record.keys()):
-                    for coords in sorted(self.piece_record[key]):
-                        print 'Writing...'
-                        f.write(self.piece_record[key][coords])
-            raise torrent_exceptions.TorrentComplete
-        self.strategy.have_event(index)
+    def _complete_piece_callback(self,index):
+        if not self._verify_piece_hash(index):
+            self.piece_record[index] = {}
+        else:
+            self.have[index] = 1
+
+            if all(self.have): # download is completed
+                self.strategy.download_completed(index)
+            else: 
+                self.strategy.have_event(index)
+
+    def _old_write_to_disk(self):
+        with open('testfile.jpg','wb+') as f:
+            for key in sorted(self.piece_record.keys()):
+                for coords in sorted(self.piece_record[key]):
+                    f.write(self.piece_record[key][coords])
 
     def _parse_announce_list(self,announce_list):
         '''Recursive method that will make sure to get every possible Tracker 
         out of announce list'''
-        return_set = set()
+        return_list = list()
         for item in announce_list:
             if type(item) is list:
-                return_set.update(self._parse_announce_list(item))
+                return_list.extend(self._parse_announce_list(item))
             else:
-                return_set.add(item)
-        return return_set
+                return_list.append(item)
+        return return_list
 
     @prop_and_memo
     def creation_date(self):
