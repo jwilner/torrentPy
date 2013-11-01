@@ -34,16 +34,16 @@ class Torrent(object):
 
         # instantiate strategy with strategy_manager
         self.strategy = self._strategy_manager.current(self)
+        self.strategy.init_callback() # should set up trackers
 
-        self.strategy.init_callback()
         self._message_dispatch = {
                     messages.Handshake : self._handshake_maker,
                     messages.Bitfield : self._bitfield_maker
                 }
         
         self.receipt_callbacks = {
-            messages.Have : self._increment_frequency,
-            messages.Bitfield : self._increment_frequency, 
+                messages.Have : lambda msg : self._increment_frequency(msg.index),
+                messages.Bitfield : self._process_bitfield
                 }
 
         self.exception_handlers = {
@@ -52,14 +52,20 @@ class Torrent(object):
     def __str__(self):
         return '<Torrent tracked at {0}>'.format(self.announce)
 
-    def _increment_frequency(self,msg):
-        self.frequency[msg.piece_index] += 1
+    def handle_exception(self,e): 
+        try:
+            self._exception_handlers[type(e)](e)
+        except KeyError:
+                self.strategy.handle_exception(e)
+
+    def receipt_callback(self,peer,msg):
+        '''Just dispatches with private strategy object''' 
+        self._strategy[type(msg)](peer,msg)
+
 
     def drop_peer(self,peer):
         '''Procedure to disconnect from peer'''
-        logger.info('Unregistering peer %s',peer.address)
         del self.peers[peer.address]
-        self.client.unregister(peer.socket)
 
     @property
     def downloaded(self):
@@ -141,15 +147,16 @@ class Torrent(object):
 
     def report_peer_addresses(self,peers):
         '''Adds peers if they're not already registered'''
-        logger.info('Found peers %s',peers)
         for peer_address in peers:
-            if self.strategy.make_peer_test(peer_address):
-                logger.info('Adding peer %s',str(peer_address))
+            if self.strategy.want_peer(peer_address):
                 s = socket.socket()
                 s.connect(peer_address)    
                 peer = Peer(s,self._client,self)
-                self.peers[peer_address] = peer
-                self.strategy.new_peer_callback(peer)
+                self.add_peer(peer)
+                
+    def add_peer(self,peer):
+        self.peers[peer.address] = peer
+        self.strategy.new_peer_callback(peer)
 
     def receive_peer_message(self,peer,msg):
         self.strategy.receipt_callback(peer,msg)
@@ -173,6 +180,14 @@ class Torrent(object):
             l_end = end     
          
         return self.piece_lengths[index] == begin+l_end
+
+    def _process_bitfield(self,msg):
+        for i,p in enumerate(msg.bitfield):
+            if p:
+                self._increment_frequency(i)
+
+    def _increment_frequency(self,index):
+        self.frequency[index] += 1
 
     def _verify_piece_hash(self,index):
         keys = sorted(self.piece_record[index].keys())

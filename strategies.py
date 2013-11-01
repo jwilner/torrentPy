@@ -41,8 +41,14 @@ class Strategy(object):
     def __init__(self,torrent):
         self._torrent = torrent
         self._exception_handlers = {
-                torrent_exceptions.FatallyFlawedMessage : self._drop_peer_procedure
+                torrent_exceptions.FatallyFlawedIncomingMessage :
+                            lambda e : self._drop_peer(e.peer),
+                torrent_exceptions.FatallyFlawedOutgoingMessage :
+                            lambda e : self._drop_peer(e.peer),
+                torrent_exceptions.MessageParsingError :
+                            lambda e : self._drop_peer(e.peer)
                 }
+
         
     def init_callback(self,index):
         '''Can use this function specifically to define different
@@ -57,18 +63,15 @@ class Strategy(object):
         try:
             self._exception_handlers[exception_type](e)
         except KeyError:
-            try:
-                self._torrent._exception_handlers[exception_type](e)
-            except KeyError:
-                raise e
+            raise e
 
     def have_event(self,index):
         for peer in self._torrent.peers.values():
             self._torrent.dispatch(peer,messages.Have,index)
 
-    def make_peer_test(self,peer_address):
+    def want_peer(self,peer_address):
         '''All these tests must pass in order for a peer to be added'''
-        return all( peer_address[0] != config.LOCAL_ADDRESS,
+        return all(peer_address[0] != config.LOCAL_ADDRESS,
                     peer_address not in self._torrent.peers,
                     len(self._torrent.peers) <= self._MAX_PEERS)
                     
@@ -84,22 +87,27 @@ class Strategy(object):
     def _get_rarest_desirable_pieces(self):
         '''Outstanding pieces that are still required '''
         return sorted((i for i,f in enumerate(self._torrent.frequency) 
-                                     if not self._torrent.have[i]),
-                                key=lambda x:x[1],
-                                reversed=True)
+                                if not self._torrent.have[i]),
+                            key=lambda x:x[1],
+                            reversed=True)
     
     def _get_non_choking_peers(self):
-        return (peer for peer in self._torrent.peers.values() if not peer.choking_me)
+        return (peer for peer in self._torrent.peers.values() 
+                        if not peer.choking_me)
 
     def _get_priority_peers(self):
         return (peer for peer in self._get_non_choking_peers() 
-                                 if len(peer.outstanding_requests) < 10 )
+                        if len(peer.outstanding_requests) < 10 )
 
     def _get_interesting_peers(self):
         return ((peer,pieces) for peer,pieces in 
                     ((peer,peer.wanted_pieces) for peer in self._torrent.peers.values() if peer.choking_me)
                         if pieces)
 
+    def _drop_peer(self,peer):
+        self._torrent.client.drop_peer(peer)
+        self._torrent.drop_peer(peer)
+        peer.drop()
 
 class RandomPieceStrategy(Strategy):
 

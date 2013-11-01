@@ -1,4 +1,4 @@
-import select, socket, config, logging
+import select, socket, config, logging, torrent_exceptions
 from peer import Peer
 from time import time
 from torrent import Torrent
@@ -44,7 +44,8 @@ class BitTorrentClient(object):
         # possible errors rising to the main level. It obviously needs more 
         # cases added. 
         self._exception_handlers = {
-                socket.error : self._socket_error_handler
+                socket.error : self._socket_error_handler,
+                torrent_exceptions.UnknownPeerHandshake: self._unknown_peer_handler
                 }
 
     def __repr__(self):
@@ -65,22 +66,22 @@ class BitTorrentClient(object):
         logger.info('Adding torrent described by %s',filename)
         self.torrents.add(Torrent(filename,self))
 
-    def register(self,s,**socket_handlers):
-        '''Register sockets and handlers'''
+    def register(self,peer,**socket_handlers):
+        '''Register peers with fileno and handlers'''
         if 'read' in socket_handlers:
-            self._listen_to.add(s)
+            self._listen_to.add(peer)
 
         logger.info('Registering socket')
 
-        self._handlers[s].update(socket_handlers)
+        self._handlers[peer].update(socket_handlers)
 
-    def unregister(self,s):
+    def unregister(self,peer):
         logger.info('Unregistering socket')
 
-        del self._handlers[s]
-        self._listen_to.discard(s)
-        self.waiting_to_write.discard(s)
-        self._dropped.add(s)
+        del self._handlers[peer]
+        self._listen_to.discard(peer)
+        self.waiting_to_write.discard(peer)
+        self._dropped.add(peer)
 
     def add_timer(self,interval,callback):
         '''Adds a callback to fire in a specified time'''
@@ -114,6 +115,7 @@ class BitTorrentClient(object):
     def _accept_connection(self):
         sock, address = self._socket.accept()
         logger.info('Connecting at %s.',address) 
+
         # b/c no torrent included yet, will require handshake
         Peer(sock,self) # __init__ registers peer with torrent
 
@@ -174,6 +176,18 @@ class BitTorrentClient(object):
                         raise e
 
         self.waiting_to_write.difference_update(write) 
+
+    def _unknown_peer_handler(self,e):
+        peer, msg = e.peer, e.msg
+        for t in self.torrents:
+            if t.hashed_info == msg.info_hash:
+                peer.torrent = t
+                t.add_peer(peer)
+                break
+            else:
+                # not interested in any of our torrents
+                self.unregister(peer)
+                peer.drop()
 
     def _socket_error_handler(self,e):
         print e.args

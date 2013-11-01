@@ -12,16 +12,25 @@ class RanDryException(Exception):
         self.unused = value
         super(RanDryException,self).__init__(message)
 
-class InvalidMessageError(Exception):
+class MessageParsingError(Exception):
     pass
 
-class FatallyFlawedMessage(Exception):
+class MessageException(Exception):
     def __init__(self,**kwargs):
         text = kwargs.pop('message','')
         self.peer = kwargs.pop('peer')
         self.msg = kwargs.pop('msg') 
-        super(FatallyFlawedMessage,self).__init__(text)
+        super(MessageException,self).__init__(text)
 
+
+class UnknownPeerHandshake(MessageException):
+    pass
+
+class FatallyFlawedIncomingMessage(MessageException):
+    pass
+
+class FatallyFlawedOutgoingMessage(MessageException):
+    pass
 
 class TorrentComplete(Exception):
     pass
