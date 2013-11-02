@@ -56,7 +56,7 @@ class Torrent(object):
         try:
             self._exception_handlers[type(e)](e)
         except KeyError:
-                self.strategy.handle_exception(e)
+            self.strategy.handle_exception(e)
 
     def receipt_callback(self,peer,msg):
         '''Just dispatches with private strategy object''' 
@@ -66,6 +66,14 @@ class Torrent(object):
     def drop_peer(self,peer):
         '''Procedure to disconnect from peer'''
         del self.peers[peer.address]
+
+    @prop_and_memo
+    def files(self):
+        if self.file_mode == 'single':
+            return [{'length':self.total_length,
+                     'path': [self.query('name')]}]
+        else:
+            return self.query('files')
 
     @property
     def downloaded(self):
