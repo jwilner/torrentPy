@@ -1,14 +1,13 @@
-import datetime, io, socket, logging, messages, config
+import datetime, io, socket, logging, messages
 import bitarray, torrent_exceptions, strategies
+from tracker import TrackerHandler
 from hashlib import sha1
 from peer import Peer
 from utils import memo, bencode, debencode, prop_and_memo 
 
-logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-
-class Torrent(object):
+class Torrent(torrent_exceptions.ExceptionManager,object):
     '''Wraps torrent metadata and keeps track of processes'''
 
     def __init__(self,filename,client):
@@ -29,7 +28,7 @@ class Torrent(object):
 
         self.file_mode = 'multi' if 'files' in self.info else 'single'
 
-        self._strategy_manager = strategies.StrategyManager(config.DEFAULT_STRATEGY_SET)
+        self._strategy_manager = strategies.StrategyManager(strategies.default_set)
         self._strategy_manager.update(strategies.INIT_EVENT)
 
         # instantiate strategy with strategy_manager
@@ -37,8 +36,8 @@ class Torrent(object):
         self.strategy.init_callback() # should set up trackers
 
         self._message_dispatch = {
-                    messages.Handshake : self._handshake_maker,
-                    messages.Bitfield : self._bitfield_maker
+                messages.Handshake : self._handshake_maker,
+                messages.Bitfield : self._bitfield_maker
                 }
         
         self.receipt_callbacks = {
@@ -46,22 +45,16 @@ class Torrent(object):
                 messages.Bitfield : self._process_bitfield
                 }
 
+        self._next_level = self.strategy
         self.exception_handlers = {
                 }
 
     def __str__(self):
         return '<Torrent tracked at {0}>'.format(self.announce)
 
-    def handle_exception(self,e): 
-        try:
-            self._exception_handlers[type(e)](e)
-        except KeyError:
-            self.strategy.handle_exception(e)
-
     def receipt_callback(self,peer,msg):
         '''Just dispatches with private strategy object''' 
         self._strategy[type(msg)](peer,msg)
-
 
     def drop_peer(self,peer):
         '''Procedure to disconnect from peer'''
@@ -90,8 +83,7 @@ class Torrent(object):
 
     @prop_and_memo
     def all_announce_urls(self):
-        return [self.annouce]+self._parse_announce_list(self.announce_list)
-
+        return [self.announce]+self._parse_announce_list(self.announce_list)
 
     @prop_and_memo
     def info(self):
@@ -141,17 +133,13 @@ class Torrent(object):
         except KeyError:
             return []
 
-    def dispatch(self,peer,message_type,*args):
+    def dispatch(self,peer,message_type,*args,**kwargs):
         '''Handles instructing peers to send messages'''
         try:
-            try:
-                msg = self._message_dispatch[message_type](peer,*args)
-            except KeyError:
-                msg = message_type(*args)
-            peer.enqueue_message(msg)
-        except torrent_exceptions.DoNotSendException:
-            # for example, stops us from sending a bitfield when we have nothing?
-            pass
+            msg = self._message_dispatch[message_type](peer,*args,**kwargs)
+        except KeyError:
+            msg = message_type(*args,**kwargs)
+        peer.enqueue_message(msg)
 
     def report_peer_addresses(self,peers):
         '''Adds peers if they're not already registered'''
@@ -161,6 +149,9 @@ class Torrent(object):
                 s.connect(peer_address)    
                 peer = Peer(s,self._client,self)
                 self.add_peer(peer)
+
+    def report_tracker_response(self,tracker):
+        self._strategy.report_tracker_response(tracker)
                 
     def add_peer(self,peer):
         self.peers[peer.address] = peer
@@ -178,6 +169,11 @@ class Torrent(object):
 
         if self._is_piece_complete(index):
             self._complete_piece_callback(index)
+
+    def start_tracker(self,announce_url):
+        t = TrackerHandler(self,announce_url)
+        t.announce('started')
+        self.trackers.add(t)
 
     def _is_piece_complete(self,index):
         this_piece = sorted(self.piece_record[index].keys())
@@ -267,10 +263,10 @@ class Torrent(object):
         msg.observers = [peer.record_handshake]
         return msg
       
-    def _bitfield_maker(self,peer,*args):
-        if not any(self.have):
-            raise torrent_exceptions.DoNotSendException
-        string = ''.join(str(bit) for bit in self.have) 
+    def _bitfield_maker(self,peer,override=None,*args):
+        have = override if override is not None else self.have    
+
+        string = ''.join(str(bit) for bit in have) 
         b = bitarray.bitarray(string)
         msg =  messages.Bitfield(b.tobytes())   
         return msg

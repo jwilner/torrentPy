@@ -1,5 +1,4 @@
 from random import choice
-import strategies
 
 PROTOCOL = 'BitTorrent protocol'
 RESERVED_BYTES = '\x00\x00\x00\x00\x00\x00\x00\x00'
@@ -12,4 +11,3 @@ DEFAULT_READ_AMOUNT = 1024*20
 MAX_REQUEST_AMOUNT = 2**13
 SELECT_TIMEOUT = 0.05
 
-DEFAULT_STRATEGY = strategies.RandomPieceStrategy

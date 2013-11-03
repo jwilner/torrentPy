@@ -9,10 +9,7 @@ from requests.exceptions import HTTPError
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-class UnhandledSocketEvent(Exception):
-    pass
-
-class BitTorrentClient(object):
+class BitTorrentClient(torrent_exceptions.ExceptionManager,object):
     '''Main object encapsulating central info and work flow for the 
     process'''
     
@@ -36,7 +33,7 @@ class BitTorrentClient(object):
 
         self._socket = s 
 
-        self.register(s,read=self._accept_connection)
+        self.register(self,read=self._accept_connection)
 
         self._http_session = FuturesSession()
 
@@ -48,16 +45,11 @@ class BitTorrentClient(object):
                 torrent_exceptions.UnknownPeerHandshake: self._unknown_peer_handler
                 }
 
+    def fileno(self):
+        return self._socket.fileno()
+
     def __repr__(self):
         return "<Joe's BitTorrent Client -- id: {0}>".format(self._data['client_id'])
-
-    @property
-    def port(self):
-        return self._data['port']
-
-    @property
-    def client_id(self):
-        return self._data['client_id']
 
     def start_torrent(self,filename):
         '''Takes a filename for a torrent file, processes that file and 
@@ -66,27 +58,27 @@ class BitTorrentClient(object):
         logger.info('Adding torrent described by %s',filename)
         self.torrents.add(Torrent(filename,self))
 
-    def register(self,peer,**socket_handlers):
-        '''Register peers with fileno and handlers'''
+    def register(self,sock_manager,**socket_handlers):
+        '''Register socket_abstraction with fileno and handlers'''
         if 'read' in socket_handlers:
-            self._listen_to.add(peer)
+            self._listen_to.add(sock_manager)
 
-        logger.info('Registering socket')
+        logger.info('Registering socket manager')
 
-        self._handlers[peer].update(socket_handlers)
+        self._handlers[sock_manager].update(socket_handlers)
 
-    def unregister(self,peer):
+    def unregister(self,sock_manager):
         logger.info('Unregistering socket')
 
-        del self._handlers[peer]
-        self._listen_to.discard(peer)
-        self.waiting_to_write.discard(peer)
-        self._dropped.add(peer)
+        del self._handlers[sock_manager]
+        self._listen_to.discard(sock_manager)
+        self.waiting_to_write.discard(sock_manager)
+        self._dropped.add(sock_manager)
 
-    def add_timer(self,interval,callback):
+    def add_timer(self,interval,callback,exception_handler):
         '''Adds a callback to fire in a specified time'''
         logger.info('Adding a callback in %d seconds: %s',interval,callback)
-        self._timers.add((callback,time()+interval))
+        self._timers.add((callback,time()+interval,exception_handler))
 
     def make_tracker_request(self,url,data,handler,e_handler):
         '''this instantiates a future object, while binding a handler that will
@@ -102,15 +94,9 @@ class BitTorrentClient(object):
         '''Main loop'''
         logger.info('Beginning main loop...')
         while True:
-            try:
-                self._check_timers()
-                self._handle_http_requests()
-                self._select_sockets_and_handle()
-            except Exception as e:
-                try: # to handle if possible
-                    self._exception_handlers[type(e)](e)
-                except KeyError:
-                    raise e
+            self._check_timers()
+            self._handle_http_requests()
+            self._select_sockets_and_handle()
 
     def _accept_connection(self):
         sock, address = self._socket.accept()
@@ -122,11 +108,14 @@ class BitTorrentClient(object):
     def _check_timers(self):
         '''For time- and interval-sensitive callbacks'''
         now = time()
-        ready_to_go = {(c,t) for (c,t) in self._timers if t <= now}
+        ready_to_go = {(c,t,e) for (c,t,e) in self._timers if t <= now}
 
-        for callback, timestamp in ready_to_go:
+        for callback, timestamp, exception_handler in ready_to_go:
             logger.info('Running callback %s at %d',repr(callback),timestamp)
-            callback()
+            try:
+                callback()
+            except Exception as e:
+                exception_handler(e)
 
         self._timers -= ready_to_go
                 
@@ -139,13 +128,10 @@ class BitTorrentClient(object):
             try:
                 response.raise_for_status()
             except HTTPError:
-                logger.info('Unsuccessful request: %s.',repr(response))
                 e_handler(response)
-            logger.info('Got a successful request back: %s.',repr(response))
             handler(response)
 
         self._futures -= completed
-        logger.info('Done checking HTTP requests...')
 
     def _select_sockets_and_handle(self):
         '''Use select interface to get prepared sockets, and then
@@ -161,19 +147,14 @@ class BitTorrentClient(object):
         for event,socktype in (('read',read),
                                ('write',write),
                                ('error',error)):
-            for sock in socktype:
-
+            for sock_manager in socktype:
                 logger.info('Handling %s event',event)
-
                 try:
-                    self._handlers[sock][event]()
+                    self._handlers[sock_manager][event]()
                 except KeyError:
-                    raise UnhandledSocketEvent
+                    raise torrent_exceptions.UnhandledSocketEvent
                 except Exception as e:
-                    try:
-                        self._exception_handlers[type(e)](e)
-                    except KeyError:
-                        raise e
+                    sock_manager.handle_exception(e)
 
         self.waiting_to_write.difference_update(write) 
 
@@ -184,14 +165,13 @@ class BitTorrentClient(object):
                 peer.torrent = t
                 t.add_peer(peer)
                 break
-            else:
-                # not interested in any of our torrents
-                self.unregister(peer)
-                peer.drop()
+        else:
+            # not interested in any of our torrents
+            self.unregister(peer)
+            peer.drop()
 
     def _socket_error_handler(self,e):
-        print e.args
-        print dir(e)
+        '''What has to happen here?'''
         raise e
 
 if __name__ == '__main__':

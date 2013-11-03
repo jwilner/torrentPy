@@ -7,7 +7,7 @@ from utils import prop_and_memo, four_bytes_to_int, StreamReader
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-class Peer(object):
+class Peer(torrent_exceptions.ExceptionManager,object):
     '''Class representing peer for specific torrent download and
     providing interface with specific TCP socket'''
 
@@ -24,7 +24,7 @@ class Peer(object):
         self.client = client
         self._torrent = torrent
         
-        if torrent:
+        if torrent is not None:
             self.has = [0]*torrent.num_pieces
 
         self.client.register(self, read=self.handle_incoming,
@@ -74,6 +74,12 @@ class Peer(object):
             messages.NotInterested : lambda m : am_interested_setter(False)
                 }
 
+        # exception handling
+        self._next_level = torrent
+        self._exception_handlers = {
+
+            }
+
     def __repr__(self):
         return self.__str__()
 
@@ -118,8 +124,8 @@ class Peer(object):
             try:
                 self._receipt_callbacks[msg_type](msg)
             except torrent_exceptions.FatallyFlawedIncomingMessage as e:
-                # should usually drop this peer, but will force
-                self.torrent.handle_exception(e)
+                # gives everyone a chance to decide what to do with this 
+                self.handle_exception(e)
             except KeyError:
                 # e.g. for KeepAlive message or any unimplemented handlers
                 pass
@@ -140,7 +146,7 @@ class Peer(object):
             except KeyError: #no callback
                 continue
             except torrent_exceptions.FatallyFlawedOutgoingMessage as e:
-                self.torrent.handle_exception(e)
+                self.handle_exception(e)
         self.outbox = deque()
 
     def enqueue_message(self,msg):
@@ -205,7 +211,7 @@ class Peer(object):
             except torrent_exceptions.RanDryException as e:
                 raise torrent_exceptions.LeftoverException(value=''.join(parts)+e.unused)
         except torrent_exceptions.MessageParsingError as e:
-            self._torrent.handle_exception(e)
+            self.handle_exception(e)
 
     def record_handshake(self,msg):
         '''Fires as callback when handshake is sent. This is a method 

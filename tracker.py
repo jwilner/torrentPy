@@ -1,7 +1,7 @@
-import config, io
+import config, io, torrent_exceptions
 from utils import debencode, parse_peer_string, prop_and_memo
 
-class TrackerHandler(object):
+class TrackerHandler(torrent_exceptions.ExceptionManager,object):
     '''Represents the http tracker server and handles interactions
     with it -- nested within a torrent object'''
 
@@ -13,6 +13,11 @@ class TrackerHandler(object):
         self.active = False 
         # if these keys are present in data, they will be included in queries
         self._optional_params = {'numwant','key','trackerid','tracker id'}
+
+        # implementing exception handling
+        self._exception_handlers = {
+                }
+        self._next_level = self._torrent
 
     def announce(self,event=None):
         '''Registers an HTTP request to the tracker server'''
@@ -49,11 +54,11 @@ class TrackerHandler(object):
 
         # register new announce with client at next appropriate time
 
-        self.client.add_timer(self.interval,self.announce_to_tracker)
         self.torrent.report_peer_addresses(self.peer_addresses)
 
-        #anything else that needs to be done here?
-                                
+        # is this the right place for this to happen? 
+        self.torrent.report_tracker_response(self)
+
     @property
     def interval(self):
         try:
@@ -103,5 +108,4 @@ class TrackerHandler(object):
             return self.announce_url[:ind]+'scrape'+self.announce_url[end:]
         else:
             raise AttributeError
-
 
