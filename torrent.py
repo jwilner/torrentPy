@@ -1,14 +1,19 @@
-import datetime, io, socket, logging, messages
+import io, socket, logging, messages, events
 import bitarray, torrent_exceptions, strategies
+from file_handler import FileHandler
 from tracker import TrackerHandler
 from hashlib import sha1
 from peer import Peer
-from utils import memo, bencode, debencode, prop_and_memo 
+from utils import memo, bencode, debencode 
 
 logger = logging.getLogger(__name__)
 
-class Torrent(torrent_exceptions.ExceptionManager,object):
-    '''Wraps torrent metadata and keeps track of processes'''
+class Torrent(events.EventManager,
+                torrent_exceptions.ExceptionManager,
+                messages.MessageManager):
+    '''Wraps torrent metadata and keeps track of processes. Ideally,
+    doesn't make any 'decisions.' They're all handled in the Strategy
+    instance.'''
 
     def __init__(self,filename,client):
         '''Opens file with context manager'''
@@ -20,53 +25,78 @@ class Torrent(torrent_exceptions.ExceptionManager,object):
         with io.open(filename,'rb') as f:
             self._data = debencode(f)
 
-        self.have = [0]*self.num_pieces
-        self.frequency = [0]*self.num_pieces
+        # just so this init function doesn't get any bigger...
+        self._calculate_properties()
+        self._file_handler = FileHandler(self.query('name'),self.files,
+                                     [p['length'] for p in self.pieces])
 
-        # tuple information pointing to filename maybe? 
-        self.piece_record = {i: {} for i in range(self.num_pieces)} 
-
-        self.file_mode = 'multi' if 'files' in self.info else 'single'
-
+        # instantiate strategy with strategy_manager
         self._strategy_manager = strategies.StrategyManager(strategies.default_set)
         self._strategy_manager.update(strategies.INIT_EVENT)
 
-        # instantiate strategy with strategy_manager
-        self.strategy = self._strategy_manager.current(self)
-        self.strategy.init_callback() # should set up trackers
+        self._strategy = self._strategy_manager.current(self)
+        self._strategy.init_callback() # should start up trackers
 
         self._message_dispatch = {
                 messages.Handshake : self._handshake_maker,
                 messages.Bitfield : self._bitfield_maker
                 }
         
-        self.receipt_callbacks = {
+        self._next_message_level = self._strategy
+        self._message_handlers = {
+            messages.INCOMING: {
                 messages.Have : lambda msg : self._increment_frequency(msg.index),
                 messages.Bitfield : self._process_bitfield
-                }
+                },
+            messages.OUTGOING: {
 
-        self._next_level = self.strategy
+                }
+            }
+
+        self._next_level = self._strategy
         self.exception_handlers = {
                 }
+
 
     def __str__(self):
         return '<Torrent tracked at {0}>'.format(self.announce)
 
-    def receipt_callback(self,peer,msg):
-        '''Just dispatches with private strategy object''' 
-        self._strategy[type(msg)](peer,msg)
+    def _calculate_properties(self):
+        self.announce = self._query('announce')
+
+        try:
+            announce_list = self._query('announce-list')
+        except KeyError:
+            announce_list = []
+
+        self.all_announce_urls = [self.announce]+self._parse_announce_list(announce_list)
+
+        self.info = self._query('info')
+        self.have = [0]*self.num_pieces
+        self.frequency = [0]*self.num_pieces
+        self.hashed_info = sha1(bencode(self.info)).digest()
+        self.piece_length = self._query('piece length')
+
+        pieces = self._query('pieces')
+        self.piece_hashes = [pieces[i:i+20] for i in range(0,len(pieces),20)]
+        self.num_pieces = len(self.piece_hashes)
+
+        # tuple information pointing to filename maybe? 
+        self.piece_record = {i: {} for i in range(self.num_pieces)} 
+
+        self.file_mode = 'multi' if 'files' in self.info else 'single'
+        if self.file_mode == 'single':
+            self.files = [{'length': int(self.query('length')),
+                             'path': [self._query('name')]}]
+        else:
+            self.files = [{'length':int(f['length']),
+                             'path':f['path']} for f in self._query('files')]
+
+        self.total_length = sum(f['length'] for f in self.files) 
 
     def drop_peer(self,peer):
         '''Procedure to disconnect from peer'''
         del self.peers[peer.address]
-
-    @prop_and_memo
-    def files(self):
-        if self.file_mode == 'single':
-            return [{'length':self.total_length,
-                     'path': [self.query('name')]}]
-        else:
-            return self.query('files')
 
     @property
     def downloaded(self):
@@ -76,62 +106,6 @@ class Torrent(torrent_exceptions.ExceptionManager,object):
     @property
     def uploaded(self):
         return sum(peer.given for peer in self.peers.values())
-
-    @prop_and_memo
-    def announce(self):
-        return self.query('announce')
-
-    @prop_and_memo
-    def all_announce_urls(self):
-        return [self.announce]+self._parse_announce_list(self.announce_list)
-
-    @prop_and_memo
-    def info(self):
-        return self._data['info']
-
-    @prop_and_memo
-    def hashed_info(self):
-        '''Hashed info dict for requests'''
-        return sha1(bencode(self.info)).digest()
-    
-    @prop_and_memo
-    def total_length(self):
-        if self.file_mode is 'single':
-            return self.query('length')
-        else:
-            return str(sum(int(f['length']) for f in self.query('files')))
-
-    @prop_and_memo
-    def piece_lengths(self):
-        piece_lengths = [self.piece_length] * self.num_pieces
-        last = self.total_length % self.piece_length
-        if last != 0:
-            piece_lengths[-1] = last
-        return piece_lengths
-
-    @prop_and_memo
-    def piece_length(self):
-        return self.query('piece length')
-
-    @prop_and_memo
-    def pieces(self):
-        '''Returns a list of the hash codes for each piece, divided by length 
-        20'''
-        pieces = self.query('pieces')
-        return [pieces[i:i+20] for i in range(0,len(pieces),20)]
-
-    @prop_and_memo
-    def num_pieces(self):
-        '''Because this operation is called all over the place'''
-        return len(self.pieces)
-
-    @prop_and_memo
-    def announce_list(self):
-        '''N.B. each item here seems to be encased in a list by default.'''
-        try:
-            return self.query('announce-list')
-        except KeyError:
-            return []
 
     def dispatch(self,peer,message_type,*args,**kwargs):
         '''Handles instructing peers to send messages'''
@@ -144,7 +118,7 @@ class Torrent(torrent_exceptions.ExceptionManager,object):
     def report_peer_addresses(self,peers):
         '''Adds peers if they're not already registered'''
         for peer_address in peers:
-            if self.strategy.want_peer(peer_address):
+            if self._strategy.want_peer(peer_address):
                 s = socket.socket()
                 s.connect(peer_address)    
                 peer = Peer(s,self._client,self)
@@ -155,10 +129,7 @@ class Torrent(torrent_exceptions.ExceptionManager,object):
                 
     def add_peer(self,peer):
         self.peers[peer.address] = peer
-        self.strategy.new_peer_callback(peer)
-
-    def receive_peer_message(self,peer,msg):
-        self.strategy.receipt_callback(peer,msg)
+        self._strategy.new_peer_callback(peer)
 
     def handle_block(self,piece_msg):
         index,begin,data = piece_msg.payload 
@@ -175,16 +146,6 @@ class Torrent(torrent_exceptions.ExceptionManager,object):
         t.announce('started')
         self.trackers.add(t)
 
-    def _is_piece_complete(self,index):
-        this_piece = sorted(self.piece_record[index].keys())
-        _,l_end = this_piece[0]
-        for begin,end in this_piece[1:]:
-            if l_end != begin:
-                return False
-            l_end = end     
-         
-        return self.piece_lengths[index] == begin+l_end
-
     def _process_bitfield(self,msg):
         for i,p in enumerate(msg.bitfield):
             if p:
@@ -197,7 +158,7 @@ class Torrent(torrent_exceptions.ExceptionManager,object):
         keys = sorted(self.piece_record[index].keys())
         joined = ''.join(self.piece_record[index][k] for k in keys)
         hashed = sha1(joined).digest()
-        return hashed in self.pieces
+        return hashed in self.piece_hashes
 
     def _complete_piece_callback(self,index):
         if not self._verify_piece_hash(index):
@@ -210,12 +171,6 @@ class Torrent(torrent_exceptions.ExceptionManager,object):
             else: 
                 self.strategy.have_event(index)
 
-    def _old_write_to_disk(self):
-        with open('testfile.jpg','wb+') as f:
-            for key in sorted(self.piece_record.keys()):
-                for coords in sorted(self.piece_record[key]):
-                    f.write(self.piece_record[key][coords])
-
     def _parse_announce_list(self,announce_list):
         '''Recursive method that will make sure to get every possible Tracker 
         out of announce list'''
@@ -227,14 +182,9 @@ class Torrent(torrent_exceptions.ExceptionManager,object):
                 return_list.append(item)
         return return_list
 
-    @prop_and_memo
-    def creation_date(self):
-        '''Returns a date object; else a KeyError bubbles through'''
-        return datetime.date.fromtimestamp(self.query('creation date'))
-
     @memo
-    def query(self,key):
-        '''This is the public method for accessing data in the torrent
+    def _query(self,key):
+        '''This is the method for accessing data in the torrent
         file. If data isn't found, a KeyError will bubble through here.'''
         return self._traverse_tree(key,self._data)
 
@@ -254,14 +204,9 @@ class Torrent(torrent_exceptions.ExceptionManager,object):
             # key isn't found at ANY level of recursion
             raise KeyError('{0} not found in torrent data.'.format(key))
 
-    def _handshake_maker(self,peer,*args):
-        try:
-            msg = self._cached_messages[messages.Handshake]
-        except KeyError:
-            msg = self._cached_messages = messages.Handshake(
+    def _handshake_maker(self,peer):
+        return  messages.Handshake(
                     self.client.client_id,self.hashed_info)
-        msg.observers = [peer.record_handshake]
-        return msg
       
     def _bitfield_maker(self,peer,override=None,*args):
         have = override if override is not None else self.have    

@@ -125,11 +125,13 @@ class BitTorrentClient(torrent_exceptions.ExceptionManager,object):
         completed = {(f,h,e) for (f,h,e) in self._futures if f.done()}
         for future, handler, e_handler in completed: 
             response = future.result()
+
             try:
                 response.raise_for_status()
             except HTTPError:
                 e_handler(response)
-            handler(response)
+            else:
+                handler(response)
 
         self._futures -= completed
 
@@ -155,8 +157,6 @@ class BitTorrentClient(torrent_exceptions.ExceptionManager,object):
                     raise torrent_exceptions.UnhandledSocketEvent
                 except Exception as e:
                     sock_manager.handle_exception(e)
-
-        self.waiting_to_write.difference_update(write) 
 
     def _unknown_peer_handler(self,e):
         peer, msg = e.peer, e.msg

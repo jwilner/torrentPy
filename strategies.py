@@ -1,14 +1,10 @@
-import messages, random, config, torrent_exceptions, tracker
+import messages, random, config, torrent_exceptions, events
 
 '''Strategy objects would be chosen based on the current state of the
 local torrent, while the strategy object makes decisions about actions for 
 particular peers on a given go through the event loop'''
 
-INIT_EVENT = 'INIT_EVENT'
-DOWNLOAD_DONE_EVENT = 'DOWNLOAD_DONE_EVENT'
-SHUTDOWN_EVENT = 'SHUTDOWN_EVENT'
-
-class StrategyManager(object):
+class StrategyManager(events.EventManager):
 
     def __init__(self,rules_strategies):
         self._rules_strategies = rules_strategies 
@@ -33,7 +29,9 @@ class StrategyManager(object):
             raise torrent_exceptions.NoStrategyFound
 
 
-class Strategy(torrent_exceptions.ExceptionManager,object):
+class Strategy(events.EventManager,
+                torrent_exceptions.ExceptionManager,
+                messages.MessageManager):
     '''extensible class internalizing the strategy'''
 
     _MAX_PEERS = 50
@@ -42,7 +40,19 @@ class Strategy(torrent_exceptions.ExceptionManager,object):
 
         self._torrent = torrent
 
+        self._event_handlers = {
+            events.TorrentInitiated : 
+                (events.NO_PROPOGATE,self.init_callback),
+            events.HaveCompletePiece :
+                (events.NO_PROPOGATE,self.have_event),
+            events.NewTorrentPeerCreated :
+                (events.NO_PROPOGATE,self.new_peer_callback),
+            events.TrackerResponseEvent : 
+                (events.NO_PROPOGATE,self.TrackerResponseEvent)
+            }
+
         # exception handling implementing ExceptionHandler
+        self._next_exception_level = torrent.client
         self._exception_handlers = {
                 torrent_exceptions.FatallyFlawedIncomingMessage :
                             lambda e : self._drop_peer(e.peer),
@@ -51,7 +61,14 @@ class Strategy(torrent_exceptions.ExceptionManager,object):
                 torrent_exceptions.MessageParsingError :
                             lambda e : self._drop_peer(e.peer)
                 }
-        self._next_level = torrent.client
+
+
+        self._message_handlers = {
+            messages.OUTGOING : {
+                },
+            messages.INCOMING : {
+                }
+            }
 
         
     def init_callback(self):
@@ -79,10 +96,6 @@ class Strategy(torrent_exceptions.ExceptionManager,object):
 
         for msg in msgs:
             self._torrent.dispatch(peer,msg)
-
-    def download_completed(self,index):
-        self._torrent._old_write_to_disk()
-        raise torrent_exceptions.TorrentComplete    
 
     def report_tracker_response(self,tracker):
         # decisions to be made here?

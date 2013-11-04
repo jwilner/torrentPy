@@ -2,6 +2,27 @@ import config
 from bitarray import bitarray
 from utils import int_to_big_endian, four_bytes_to_int, prop_and_memo, memo
 
+OUTGOING = 'OUTGOING'
+INCOMING = 'INCOMING'
+
+class MessageManager():
+
+    def _handle_message_event(self,msg,msg_type=None):
+        '''Dispatch procedure common to all message handling objects'''
+        if msg_type is None:
+            msg_type = type(msg)
+
+        try:
+            self._message_handlers[msg.EVENT_TYPE][msg_type](msg)
+        except KeyError:
+            pass
+
+        try: 
+            self._next_message_level.handle_message_event(self,msg,msg_type)
+        except AttributeError:
+            pass
+
+
 class InvalidMessage(Exception):
     pass
 
@@ -10,6 +31,11 @@ class InvalidHandshake(InvalidMessage):
 
 class Msg(object):
     '''super class'''
+
+    def __init__(self,**kwargs):
+        self.EVENT_TYPE = kwargs.pop('msg_event') 
+        self.peer = None
+
     def __repr__(self):
         return '{0}'.format(type(self))
 

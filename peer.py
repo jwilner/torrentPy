@@ -7,7 +7,8 @@ from utils import prop_and_memo, four_bytes_to_int, StreamReader
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-class Peer(torrent_exceptions.ExceptionManager,object):
+class Peer(torrent_exceptions.ExceptionManager,
+            messages.MessageManager,object):
     '''Class representing peer for specific torrent download and
     providing interface with specific TCP socket'''
 
@@ -16,6 +17,9 @@ class Peer(torrent_exceptions.ExceptionManager,object):
         self.socket = socket
         self.active = True
         self.peer_id = None
+        
+        self.address = socket.getpeername()
+        self.ip, self.port = self.address
 
         self.outbox = deque() 
         self.sent_folder, self.archive = [], []
@@ -35,7 +39,10 @@ class Peer(torrent_exceptions.ExceptionManager,object):
         self.last_spoke_to = 0
 
         self._read_buffer = ''
-        self._write_buffer = ''
+
+        # for sending process, a queue of tuples -- msg and offset remaining
+        # to be sent
+        self._pending_send = deque()
 
         self.outstanding_requests = set()
 
@@ -51,31 +58,34 @@ class Peer(torrent_exceptions.ExceptionManager,object):
 
         # Don't need to define a handler for KeepAlive, because undefined 
         # messages fail silently but still update 'last_heard_from'
-        self._receipt_callbacks = {
-            messages.Handshake : self._process_handshake,
-            messages.Choke : lambda x : choking_me_setter(True),
-            messages.Unchoke : lambda x : choking_me_setter(False),
-            messages.Interested : lambda x : interested_me_setter(True),
-            messages.NotInterested : lambda x : interested_me_setter(False),
-            messages.Have : self._process_have,
-            messages.Bitfield : self._process_bitfield,
-            messages.Request : self._process_request,
-            messages.Piece : self._process_piece,
-            messages.Cancel : self._process_cancel
-                }
+        self._next_message_level = torrent
 
-        self._sent_callbacks = {
-            messages.Handshake : self.record_handshake,
-            messages.Request : self.record_request,
-            messages.Cancel : self.record_cancel,
-            messages.Choke : lambda m : am_choking_setter(True),
-            messages.Unchoke : lambda m : am_choking_setter(False),
-            messages.Interested : lambda m : am_interested_setter(True),
-            messages.NotInterested : lambda m : am_interested_setter(False)
-                }
+        self._message_handlers = {
+            messages.INCOMING : {
+                 messages.Handshake : self._process_handshake,
+                 messages.Choke : lambda x : choking_me_setter(True),
+                 messages.Unchoke : lambda x : choking_me_setter(False),
+                 messages.Interested : lambda x : interested_me_setter(True),
+                 messages.NotInterested : lambda x : interested_me_setter(False),
+                 messages.Have : self._process_have,
+                 messages.Bitfield : self._process_bitfield,
+                 messages.Request : self._process_request,
+                 messages.Piece : self._process_piece,
+                 messages.Cancel : self._process_cancel
+             },
+            messages.OUTGOING : { 
+                 messages.Handshake : self.record_handshake,
+                 messages.Request : self.record_request,
+                 messages.Cancel : self.record_cancel,
+                 messages.Choke : lambda m : am_choking_setter(True),
+                 messages.Unchoke : lambda m : am_choking_setter(False),
+                 messages.Interested : lambda m : am_interested_setter(True),
+                 messages.NotInterested : lambda m : am_interested_setter(False)
+            }
+        }
 
         # exception handling
-        self._next_level = torrent
+        self._next_except_level = torrent
         self._exception_handlers = {
 
             }
@@ -96,9 +106,12 @@ class Peer(torrent_exceptions.ExceptionManager,object):
 
     @choking_me.setter
     def choking_me(self,value):
+        # should I really filter out outstanding_requests here? Seems like
+        # a job for the strategy class, no?
         if value is True: 
             self.outbox = deque(
-                    msg for msg in self.outbox if type(msg) is not messages.Request)
+                    msg for msg in self.outbox 
+                        if type(msg) is not messages.Request)
         self._choking_me = value
 
     @property
@@ -120,59 +133,35 @@ class Peer(torrent_exceptions.ExceptionManager,object):
         self.last_heard_from = time()
 
         for msg in self._read_from_socket():
-            msg_type = type(msg)
             try:
-                self._receipt_callbacks[msg_type](msg)
+                self.handle_message_event(msg)
             except torrent_exceptions.FatallyFlawedIncomingMessage as e:
-                # gives everyone a chance to decide what to do with this 
                 self.handle_exception(e)
-            except KeyError:
-                # e.g. for KeepAlive message or any unimplemented handlers
-                pass
 
     def handle_outgoing(self):
-        strung = ''.join(str(msg) for msg in self.outbox)
-        try:
-            self.socket.sendall(strung)
-        except socket.error as e:
-             self._torrent.handle_exception(
-                    torrent_exceptions.PeerSocketError(
-                     peer=self,socket_error=socket.error))
+        sent_msgs = self._send_via_socket()
 
-        self.last_spoke_to = time()
-        for msg in self.outbox:
+        for msg in sent_msgs:
             try:
-                self._sent_callbacks[type(msg)](msg)
-            except KeyError: #no callback
-                continue
+                self.handle_message_event(msg)
             except torrent_exceptions.FatallyFlawedOutgoingMessage as e:
                 self.handle_exception(e)
-        self.outbox = deque()
+
+        if not self._pending_send:
+            self._client.waiting_to_write.discard(self)
 
     def enqueue_message(self,msg):
         # if outbox is currently empty, then we'll want to tell the client
-        notify = not self.outbox
-        self.outbox.append(msg)
+        notify = not self._pending_send
+        self._pending_send.append([msg,len(msg)])
 
         if notify: # tell client
-            self.client.waiting_to_write.add(self.socket)
+            self.client.waiting_to_write.add(self)
 
     def drop(self):
         '''Procedure to disconnect socket'''
         self.active = False
         self.socket.close()
-
-    @prop_and_memo
-    def address(self):
-        return self.socket.getpeername()
-
-    @prop_and_memo
-    def ip(self):
-        return self.address[0]
-
-    @prop_and_memo
-    def port(self):
-        return self.address[1]
 
     def _read_from_socket(self):
         new_string = self.socket.recv(config.DEFAULT_READ_AMOUNT)
@@ -184,6 +173,31 @@ class Peer(torrent_exceptions.ExceptionManager,object):
         except torrent_exceptions.LeftoverException as e:
             self._read_buffer = e.leftover
 
+    def _send_via_socket(self):
+        '''Attempts to send message via socket. Returns a list of 
+        msgs sent -- potentially empty if sent was incomplete'''
+
+        strung = ''.join(str(msg)[-length:] for msg,length in self._pending_send)
+        amt_sent = self._socket.send(strung)
+         
+        sent_msgs = []
+
+        while amt_sent:
+            # loop over lengths of pending msgs, updating their remaining amount 
+            # or appending them to the response list if they've been completely sent
+            if self._pending_send[0][1] > amt_sent:
+                self._pending_send[0][1] -= amt_sent
+                amt_sent = 0
+            else:
+                amt_sent -= length
+                # appends actual msg to self
+                sent_msgs.append(self._pending_send.leftpop()[0])
+
+        if sent_msgs:
+            self.last_spoke_to = time()
+
+        return sent_msgs
+
     def _parse_string_to_message(self,stream):
         parts = []
         try:
@@ -194,7 +208,9 @@ class Peer(torrent_exceptions.ExceptionManager,object):
                     for l in (pstrlen,8,20,20): # protocol string, reserved, info hash, peer_id
                         parts.append(stream.read(l))
                     info_hash, peer_id = parts[3], parts[4]
-                    return messages.Handshake(peer_id,info_hash,reserved=parts[2],pstr=parts[1])
+                    return messages.Handshake(
+                            peer_id,info_hash,reserved=parts[2],pstr=parts[1],
+                            msg_event=messages.INCOMING)
                 except torrent_exceptions.RanDryException as e:
                     raise torrent_exceptions.LeftoverException(value=''.join(parts)+e.unused)
             # normal message
@@ -207,7 +223,8 @@ class Peer(torrent_exceptions.ExceptionManager,object):
                 parts.append(stream.read(length))
                 msg_body = parts[1]
                 msg_id = ord(msg_body[0])
-                return messages.lookup[msg_id](msg_body[1:],from_string=True)
+                return messages.lookup[msg_id](
+                        msg_body[1:],from_string=True,msg_event=messages.INCOMING)
             except torrent_exceptions.RanDryException as e:
                 raise torrent_exceptions.LeftoverException(value=''.join(parts)+e.unused)
         except torrent_exceptions.MessageParsingError as e:

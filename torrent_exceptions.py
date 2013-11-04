@@ -11,7 +11,7 @@ class ExceptionManager():
             self._exception_handlers[e_type](e)
         except KeyError:
             try:
-                self._next_level.handle_exception(e,e_type=e_type)
+                self._next_exception_level.handle_exception(e,e_type=e_type)
             except AttributeError:
                 raise e
 
@@ -48,6 +48,9 @@ class FatallyFlawedIncomingMessage(MessageException):
     pass
 
 class FatallyFlawedOutgoingMessage(MessageException):
+    pass
+
+class SendIncomplete(MessageException):
     pass
 
 class TorrentComplete(Exception):

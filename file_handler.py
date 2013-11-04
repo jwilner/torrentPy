@@ -53,6 +53,9 @@ class FileHandler(object):
                 f.seek(s_point)
                 f.write(stream.read(length))
 
+        # check if piece complete
+        self._is_piece_complete(piece)
+
     def read(self,piece,offset,length):
         '''Takes piece coordinates and returns chained together bytearrays'''
         return itertools.chain.from_iterable(
