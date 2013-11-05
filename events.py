@@ -1,23 +1,21 @@
 
-PROPOGATE = 'PROPOGATE'
-NO_PROPOGATE = 'NO PROPOGATE'
-
 class EventManager(object):
+
     def handle_event(self,event,e_type=None):
         if e_type is None:
             e_type = type(event)
 
         try:
-            propogate,func = self._event_handlers
+            targets,func = self._event_handlers[e_type]
             func(event) 
         except KeyError:
-            propogate = PROPOGATE
+            return
 
-        if propogate == PROPOGATE:
-            try:
-                self._next_event_level.handle_event(event,e_type)
-            except AttributeError:
-                pass
+        try:
+            for obj in targets:
+                obj.handle_event(event,e_type)
+        except AttributeError:
+            return
 
 class TorrentEvent(object):
     def __init__(self,**kwargs):
@@ -31,6 +29,9 @@ class TorrentEvent(object):
 
 class HaveCompletePiece(TorrentEvent):
     '''Created with a piece index when a piece's download is completed''' 
+    pass
+
+class NewPeerRegistration(TorrentEvent):
     pass
 
 class NewTorrentPeerCreated(TorrentEvent):
@@ -52,4 +53,12 @@ class DownloadComplete(TorrentEvent):
 
 class Shutdown(TorrentEvent):
     '''Created when the program is instructed to shutdown'''
+    pass
+
+class PeerReadyToSend(TorrentEvent):
+    '''Created when a peer is ready to send a message'''
+    pass
+
+class PeerDoneSending(TorrentEvent):
+    '''Created when a peer is done sending messages'''
     pass
