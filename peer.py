@@ -1,8 +1,8 @@
-import messages, config, torrent_exceptions, logging, socket, events
+import messages, config, torrent_exceptions, logging, events
 from time import time
 from collections import deque
 from functools import partial
-from utils import prop_and_memo, four_bytes_to_int, StreamReader
+from utils import four_bytes_to_int, StreamReader
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -13,7 +13,7 @@ class Peer(torrent_exceptions.ExceptionManager,
     '''Class representing peer for specific torrent download and
     providing interface with specific TCP socket'''
 
-    def __init__(self,socket,client,num_pieces=None,msg_target=None,event_target=None,exception_target=None):
+    def __init__(self,socket,num_pieces=None,msg_target=None,exception_target=None,event_observer=None):
         logger.info('Instantiating peer %s',str(socket.getpeername()))
         self.socket = socket
         self.active = True
@@ -26,6 +26,8 @@ class Peer(torrent_exceptions.ExceptionManager,
         self.sent_folder, self.archive = [], []
 
         self.handshake = {'sent': False, 'received': False } 
+
+        self.event_observer = event_observer
 
         self.handle_event(events.NewPeerRegistration(
                                     peer=self,
@@ -95,25 +97,9 @@ class Peer(torrent_exceptions.ExceptionManager,
     def fileno(self):
         return self._socket.fileno()
 
-    @property
-    def choking_me(self):
-        return self._choking_me
-
-    @choking_me.setter
-    def choking_me(self,value):
-        # should I really filter out outstanding_requests here? Seems like
-        # a job for the strategy class, no?
-        if value is True: 
-            self.outbox = deque(
-                    msg for msg in self.outbox 
-                        if type(msg) is not messages.Request)
-        self._choking_me = value
-
-    @property
-    def wanted_pieces(self):
-        return {i for i,v in enumerate(self.has) 
-                    if v and not self.torrent.have[i]}
-
+    def wanted_pieces(self,have_list):
+        return {i for i,v in enumerate(self.has) if v and not have_list[i]}
+    
     def handle_incoming(self):
         self.last_heard_from = time()
 
@@ -125,6 +111,9 @@ class Peer(torrent_exceptions.ExceptionManager,
 
     def handle_outgoing(self):
         sent_msgs = self._send_via_socket()
+
+        if sent_msgs:
+            self.last_spoke_to = time()
 
         for msg in sent_msgs:
             try:
@@ -181,9 +170,6 @@ class Peer(torrent_exceptions.ExceptionManager,
                 amt_sent -= length
                 # appends actual msg to self
                 sent_msgs.append(self._pending_send.leftpop()[0])
-
-        if sent_msgs:
-            self.last_spoke_to = time()
 
         return sent_msgs
 
