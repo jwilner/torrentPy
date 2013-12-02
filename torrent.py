@@ -4,7 +4,7 @@ from file_handler import FileHandler
 from tracker import TrackerHandler
 from hashlib import sha1
 from peer import Peer
-from utils import memo, bencode, debencode
+from utils import memo, bencode, bdecode
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ class Torrent(events.EventManager,
         self._trackers = set()
 
         with io.open(filename,'rb') as f:
-            self._data = debencode(f)
+            self._data = bdecode(f)
 
         # just so this init function doesn't get any bigger...
         self._calculate_properties()
