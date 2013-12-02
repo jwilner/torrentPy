@@ -41,14 +41,7 @@ class Strategy(events.EventManager,
         self._torrent = torrent
 
         self._event_handlers = {
-            events.TorrentInitiated :
-                (events.NO_PROPOGATE,self.init_callback),
-            events.HaveCompletePiece :
-                (events.NO_PROPOGATE,self.have_event),
-            events.NewTorrentPeerCreated :
-                (events.NO_PROPOGATE,self.new_peer_callback),
-            events.TrackerResponseEvent :
-                (events.NO_PROPOGATE,self.TrackerResponseEvent)
+            events.TrackerResponse : self._tracker_response_callback
             }
 
         # exception handling implementing ExceptionHandler
@@ -75,7 +68,8 @@ class Strategy(events.EventManager,
         '''Can use this function specifically to define different
         approaches to trackers -- e.g. load all at once, or as needed'''
         for url in self._torrent.all_announce_urls:
-            self._torrent.start_tracker(url)
+            self._torrent.trackers.add(
+                    self.make_tracker(url))
 
     def have_event(self,index):
         for peer in self._torrent.peers.values():
@@ -83,9 +77,9 @@ class Strategy(events.EventManager,
 
     def want_peer(self,peer_address):
         '''All these tests must pass in order for a peer to be added'''
-        return all(peer_address[0] != config.LOCAL_ADDRESS,
-                    peer_address not in self._torrent.peers,
-                    len(self._torrent.peers) <= self._MAX_PEERS)
+        return (peer_address[0] != config.LOCAL_ADDRESS and
+                peer_address not in self._torrent.peers and
+                len(self._torrent.peers) <= self._MAX_PEERS)
 
     def new_peer_callback(self,peer):
         '''Defines behavior to call after creating a new peer'''
@@ -97,13 +91,41 @@ class Strategy(events.EventManager,
         for msg in msgs:
             self._torrent.dispatch(peer,msg)
 
-    def report_tracker_response(self,tracker):
-        # decisions to be made here?
+    def tracker_response_callback(self,event):
 
-        self._torrent.client.add_timer(
-                tracker.interval,
-                tracker.announce_to_tracker,
-                tracker.exception_handler)
+        for adr in event.new_peer_addresses:
+            if self.want_peer(adr):
+                self.make_peer(adr)
+
+        # check back in at requested interval
+        self.client.add_timer(
+                event.tracker.interval,
+                lambda : self.make_tracker_announce_request(event.tracker),
+                self.handle_exception)
+
+    def make_tracker_announce_request(self,tracker,event_type=None):
+        announce_params = {
+                'info_hash':self._torrent.hashed_info,
+                'peer_id':self.client.client_id,
+                'port':self.client.port,
+                'uploaded':self.torrent.uploaded,
+                'downloaded':self.torrent.downloaded,
+                'left':self.torrent.total_length,
+                'compact':1,
+                'supportcrypto':1}
+
+        if event_type is not None:
+            announce_params['event'] = event_type
+
+        announce_params.update(
+                {p:tracker.data[p] for p in tracker.optional_params
+                    if p in tracker.data})
+
+        self.client.make_tracker_request(
+                tracker.announce_url,
+                announce_params,
+                tracker.handle_response,
+                self.handle_exception)
 
     def _get_rarest_desirable_pieces(self):
         '''Outstanding pieces that are still required '''
