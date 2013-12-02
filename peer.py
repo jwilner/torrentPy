@@ -27,13 +27,11 @@ class Peer(torrent_exceptions.ExceptionManager,
 
         self.handshake = {'sent': False, 'received': False }
 
-        self.event_observer = event_observer
-
-        self.handle_event(events.NewPeerRegistration(
+        self.handle_event(events.PeerRegistration(
                                     peer=self,
                                     read=self.handle_incoming,
                                     write=self.handle_outgoing,
-                                    error=self.handle_socket_error))
+                                    error=self.handle_exception))
 
         self.last_heard_from = time()
         self.last_spoke_to = 0
@@ -84,15 +82,13 @@ class Peer(torrent_exceptions.ExceptionManager,
         }
 
         # exception handling
-        self._exception_handlers = {
-
-            }
+        self._exception_handlers = {}
 
     def __repr__(self):
         return self.__str__()
 
     def __str__(self):
-        return '<Peer at {1!s}:{2!s}>'.format(self.ip, self.port)
+        return '<Peer at {0}:{1}>'.format(self.ip, self.port)
 
     def fileno(self):
         return self._socket.fileno()
