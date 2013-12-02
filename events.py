@@ -2,7 +2,7 @@ import torrent_exceptions
 
 class EventManager(object):
 
-    observer = None
+    event_observer = None
     event_handlers = {}
 
     def handle_event(self,event,e_type=None):
@@ -13,7 +13,7 @@ class EventManager(object):
             self.event_handlers[e_type](event,e_type)
         except KeyError:
             try:
-                self.observer.handle_event(event,e_type)
+                self.event_observer.handle_event(event,e_type)
             except AttributeError:
                 pass
 
@@ -44,8 +44,6 @@ class HaveCompletePiece(TorrentEvent):
     '''Created with a piece index when a piece's download is completed'''
     pass
 
-class NewPeerRegistration(TorrentEvent):
-    pass
 
 class NewTorrentPeerCreated(TorrentEvent):
     '''Created with a peer as an argument when a peer has been created
@@ -68,7 +66,11 @@ class PeerEvent(Event):
     '''Parent class for all peer events'''
     required_keywords = {'peer'}
 
-class PeerReadyToSend(TorrentEvent):
+class PeerRegistration(PeerEvent):
+    '''Raised when new peer is instantiated.'''
+    required_keywords = {'peer','read','write','error'}
+
+class PeerReadyToSend(PeerEvent):
     '''Created when a peer is ready to send a message'''
     pass
 
