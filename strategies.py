@@ -1,13 +1,13 @@
 import messages, random, config, torrent_exceptions, events
 
 '''Strategy objects would be chosen based on the current state of the
-local torrent, while the strategy object makes decisions about actions for 
+local torrent, while the strategy object makes decisions about actions for
 particular peers on a given go through the event loop'''
 
 class StrategyManager(events.EventManager):
 
     def __init__(self,rules_strategies):
-        self._rules_strategies = rules_strategies 
+        self._rules_strategies = rules_strategies
         self.current = None
 
     def update(self,torrent,event=None):
@@ -35,19 +35,19 @@ class Strategy(events.EventManager,
     '''extensible class internalizing the strategy'''
 
     _MAX_PEERS = 50
-    
+
     def __init__(self,torrent):
 
         self._torrent = torrent
 
         self._event_handlers = {
-            events.TorrentInitiated : 
+            events.TorrentInitiated :
                 (events.NO_PROPOGATE,self.init_callback),
             events.HaveCompletePiece :
                 (events.NO_PROPOGATE,self.have_event),
             events.NewTorrentPeerCreated :
                 (events.NO_PROPOGATE,self.new_peer_callback),
-            events.TrackerResponseEvent : 
+            events.TrackerResponseEvent :
                 (events.NO_PROPOGATE,self.TrackerResponseEvent)
             }
 
@@ -70,7 +70,7 @@ class Strategy(events.EventManager,
                 }
             }
 
-        
+
     def init_callback(self):
         '''Can use this function specifically to define different
         approaches to trackers -- e.g. load all at once, or as needed'''
@@ -86,7 +86,7 @@ class Strategy(events.EventManager,
         return all(peer_address[0] != config.LOCAL_ADDRESS,
                     peer_address not in self._torrent.peers,
                     len(self._torrent.peers) <= self._MAX_PEERS)
-                    
+
     def new_peer_callback(self,peer):
         '''Defines behavior to call after creating a new peer'''
         msgs = [messages.Handshake]
@@ -107,11 +107,11 @@ class Strategy(events.EventManager,
 
     def _get_rarest_desirable_pieces(self):
         '''Outstanding pieces that are still required '''
-        return sorted((i for i,f in enumerate(self._torrent.frequency) 
+        return sorted((i for i,f in enumerate(self._torrent.frequency)
                                 if not self._torrent.have[i]),
                             key=lambda x:x[1],
                             reversed=True)
-    
+
     def _drop_peer(self,peer):
         self._torrent.client.drop_peer(peer)
         self._torrent.drop_peer(peer)

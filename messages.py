@@ -17,7 +17,7 @@ class MessageManager():
         except KeyError:
             pass
 
-        try: 
+        try:
             self._next_message_level.handle_message_event(self,msg,msg_type)
         except AttributeError:
             pass
@@ -33,7 +33,7 @@ class Msg(object):
     '''super class'''
 
     def __init__(self,**kwargs):
-        self.EVENT_TYPE = kwargs.pop('msg_event') 
+        self.EVENT_TYPE = kwargs.pop('msg_event')
         self.peer = None
 
     def __repr__(self):
@@ -44,7 +44,7 @@ class Handshake(Msg):
         super(Handshake,self).__init__()
         self.peer_id = peerid
         self.info_hash = info_hash
-        self.reserved = reserved 
+        self.reserved = reserved
         self.pstr = pstr
         self.pstrlen = chr(len(self.pstr))
 
@@ -54,7 +54,7 @@ class Handshake(Msg):
 
 class Message(Msg):
     id = ''
-    
+
     def __init__(self,*args,**kwargs):
         super(Message,self).__init__()
         from_string = kwargs.pop('from_string',False)
@@ -166,7 +166,7 @@ class Request(Message):
     def get_triple(self):
         return self.index,self.begin,self.length
 
-    def _parse_string(self): 
+    def _parse_string(self):
         return [four_bytes_to_int(self._string[i:i+4]) for i in (0,4,8)]
 
     def _parse_payload(self):
@@ -195,7 +195,7 @@ class Piece(Message):
         return [four_bytes_to_int(self._string[i:i+4]) for i in (0,4)]+[self._string[8:]]
 
     def _parse_payload(self):
-        return ''.join(int_to_big_endian(i) for i in self._payload) 
+        return ''.join(int_to_big_endian(i) for i in self._payload)
 
     def __repr__(self):
         return '<Piece message for piece {0} beginning at {1} with length {2} >'.format(self.index,self.begin,len(self.block))

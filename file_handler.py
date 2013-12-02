@@ -8,7 +8,7 @@ def safe_filename(filename):
 
 class FileHandler(object):
     '''A class for handling file operations within the torrent. Takes files,
-     a list of dictionaries of length and path, and a list of piece lengths. 
+     a list of dictionaries of length and path, and a list of piece lengths.
      The basic idea is to break all reads and writes into the common denominator
      of bytes'''
 
@@ -18,7 +18,7 @@ class FileHandler(object):
         directory = test_name = safe_filename(start_name)
 
         i = 1
-        while os.path.exists(test_name): 
+        while os.path.exists(test_name):
             test_name = directory+'({0})'.format(i)
             i += 1
 
@@ -26,7 +26,7 @@ class FileHandler(object):
         os.mkdir(self._directory)
 
         self._files = {}
-        start_in_bytes = 0     
+        start_in_bytes = 0
         for f in files:
             full_path = safe_filename(os.path.join(self._directory,*f['path']))
             dir_path = os.path.dirname(full_path)
@@ -35,8 +35,8 @@ class FileHandler(object):
             f.open(full_path,mode='w').close()
 
             end_in_bytes = start_in_bytes + int(f['length'])
-            self._files[start_in_bytes,end_in_bytes] = full_path 
-            
+            self._files[start_in_bytes,end_in_bytes] = full_path
+
             start_in_bytes = end_in_bytes
 
         self._piece_starts = [sum(p_l for p_l in piece_lengths[:i])
@@ -59,8 +59,8 @@ class FileHandler(object):
     def read(self,piece,offset,length):
         '''Takes piece coordinates and returns chained together bytearrays'''
         return itertools.chain.from_iterable(
-                self._read_helper(file_path,seek_point,read_amount) 
-                    for file_path,seek_point,read_amount 
+                self._read_helper(file_path,seek_point,read_amount)
+                    for file_path,seek_point,read_amount
                     in self._block_to_files(piece,offset,length))
 
     def _read_helper(self,file_path,seek_point,amount):
@@ -73,9 +73,9 @@ class FileHandler(object):
         filename, seek_point, and length.'''
 
         block_start = self._piece_starts[piece_index] + offset
-        block_end = block_start + block_length  
+        block_end = block_start + block_length
 
-        files = ((file_path,file_start,file_end) 
+        files = ((file_path,file_start,file_end)
                     for file_start,file_end,file_path in self._files.items()
                         if file_start <= block_start and
                             file_end >= block_end)

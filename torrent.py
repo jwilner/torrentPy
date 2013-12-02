@@ -4,7 +4,7 @@ from file_handler import FileHandler
 from tracker import TrackerHandler
 from hashlib import sha1
 from peer import Peer
-from utils import memo, bencode, debencode 
+from utils import memo, bencode, debencode
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ class Torrent(events.EventManager,
                 messages.Handshake : self._handshake_maker,
                 messages.Bitfield : self._bitfield_maker
                 }
-        
+
         self._next_message_level = self._strategy
         self._message_handlers = {
             messages.INCOMING: {
@@ -81,8 +81,8 @@ class Torrent(events.EventManager,
         self.piece_hashes = [pieces[i:i+20] for i in range(0,len(pieces),20)]
         self.num_pieces = len(self.piece_hashes)
 
-        # tuple information pointing to filename maybe? 
-        self.piece_record = {i: {} for i in range(self.num_pieces)} 
+        # tuple information pointing to filename maybe?
+        self.piece_record = {i: {} for i in range(self.num_pieces)}
 
         self.file_mode = 'multi' if 'files' in self.info else 'single'
         if self.file_mode == 'single':
@@ -92,7 +92,7 @@ class Torrent(events.EventManager,
             self.files = [{'length':int(f['length']),
                              'path':f['path']} for f in self._query('files')]
 
-        self.total_length = sum(f['length'] for f in self.files) 
+        self.total_length = sum(f['length'] for f in self.files)
 
     def drop_peer(self,peer):
         '''Procedure to disconnect from peer'''
@@ -101,7 +101,7 @@ class Torrent(events.EventManager,
     @property
     def downloaded(self):
         return 0
-        return sum(len(piece.bytes) for piece in self._dled_pieces) 
+        return sum(len(piece.bytes) for piece in self._dled_pieces)
 
     @property
     def uploaded(self):
@@ -120,20 +120,20 @@ class Torrent(events.EventManager,
         for peer_address in peers:
             if self._strategy.want_peer(peer_address):
                 s = socket.socket()
-                s.connect(peer_address)    
+                s.connect(peer_address)
                 peer = Peer(s,self._client,self)
                 self.add_peer(peer)
 
     def report_tracker_response(self,tracker):
         self._strategy.report_tracker_response(tracker)
-                
+
     def add_peer(self,peer):
         self.peers[peer.address] = peer
         self._strategy.new_peer_callback(peer)
 
     def handle_block(self,piece_msg):
-        index,begin,data = piece_msg.payload 
-        coords = begin,len(data) 
+        index,begin,data = piece_msg.payload
+        coords = begin,len(data)
         if coords in self.piece_record[index]:
             return
         self.piece_record[index][coords] = data # write data to disk here?
@@ -168,11 +168,11 @@ class Torrent(events.EventManager,
 
             if all(self.have): # download is completed
                 self.strategy.download_completed(index)
-            else: 
+            else:
                 self.strategy.have_event(index)
 
     def _parse_announce_list(self,announce_list):
-        '''Recursive method that will make sure to get every possible Tracker 
+        '''Recursive method that will make sure to get every possible Tracker
         out of announce list'''
         return_list = list()
         for item in announce_list:
@@ -193,25 +193,25 @@ class Torrent(events.EventManager,
         an index error if nothing is found.'''
         for k,v in tree.items():
             if k == key:
-                return v 
+                return v
             if type(v) is dict:
                 try:
                     return self._traverse_tree(key,v)
                 except KeyError:
                     continue
         else:
-            # this pattern ensures that an IndexError is only raised if the 
+            # this pattern ensures that an IndexError is only raised if the
             # key isn't found at ANY level of recursion
             raise KeyError('{0} not found in torrent data.'.format(key))
 
     def _handshake_maker(self,peer):
         return  messages.Handshake(
                     self.client.client_id,self.hashed_info)
-      
-    def _bitfield_maker(self,peer,override=None,*args):
-        have = override if override is not None else self.have    
 
-        string = ''.join(str(bit) for bit in have) 
+    def _bitfield_maker(self,peer,override=None,*args):
+        have = override if override is not None else self.have
+
+        string = ''.join(str(bit) for bit in have)
         b = bitarray.bitarray(string)
-        msg =  messages.Bitfield(b.tobytes())   
+        msg =  messages.Bitfield(b.tobytes())
         return msg

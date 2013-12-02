@@ -10,18 +10,18 @@ logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 class BitTorrentClient(torrent_exceptions.ExceptionManager,object):
-    '''Main object encapsulating central info and work flow for the 
+    '''Main object encapsulating central info and work flow for the
     process'''
-    
+
     _listen_to = set()
     _handlers = defaultdict(dict)
     waiting_to_write = set() # peers register themselves in this set
     _dropped = set() # peers to ignore
 
     _futures = set() # pending http_requests
-    torrents = set()  
-    _timers = set() # timer tuple pairs -- callback, timestamp 
-    
+    torrents = set()
+    _timers = set() # timer tuple pairs -- callback, timestamp
+
     def __init__(self,port=config.DEFAULT_PORT,client_id=config.CLIENT_ID):
         self.port, self.client_id = port, client_id
         logger.info('Starting up on port %d',port)
@@ -31,15 +31,15 @@ class BitTorrentClient(torrent_exceptions.ExceptionManager,object):
         s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
         s.listen(config.MAX_LISTEN)
 
-        self._socket = s 
+        self._socket = s
 
         self.register(self,read=self._accept_connection)
 
         self._http_session = FuturesSession()
 
-        # this ideally would be a dictionary providing easy dispatch on 
-        # possible errors rising to the main level. It obviously needs more 
-        # cases added. 
+        # this ideally would be a dictionary providing easy dispatch on
+        # possible errors rising to the main level. It obviously needs more
+        # cases added.
         self._exception_handlers = {
                 socket.error : self._socket_error_handler,
                 torrent_exceptions.UnknownPeerHandshake: self._unknown_peer_handler
@@ -52,7 +52,7 @@ class BitTorrentClient(torrent_exceptions.ExceptionManager,object):
         return "<Joe's BitTorrent Client -- id: {0}>".format(self._data['client_id'])
 
     def start_torrent(self,filename):
-        '''Takes a filename for a torrent file, processes that file and 
+        '''Takes a filename for a torrent file, processes that file and
         enqueues a request via socket.'''
 
         logger.info('Adding torrent described by %s',filename)
@@ -100,7 +100,7 @@ class BitTorrentClient(torrent_exceptions.ExceptionManager,object):
 
     def _accept_connection(self):
         sock, address = self._socket.accept()
-        logger.info('Connecting at %s.',address) 
+        logger.info('Connecting at %s.',address)
 
         # b/c no torrent included yet, will require handshake
         Peer(sock,self) # __init__ registers peer with torrent
@@ -118,12 +118,12 @@ class BitTorrentClient(torrent_exceptions.ExceptionManager,object):
                 exception_handler(e)
 
         self._timers -= ready_to_go
-                
+
     def _handle_http_requests(self):
-        '''Checks futures and if complete, calls an appropriate handler'''             
+        '''Checks futures and if complete, calls an appropriate handler'''
         logger.info('Checking HTTP requests...')
         completed = {(f,h,e) for (f,h,e) in self._futures if f.done()}
-        for future, handler, e_handler in completed: 
+        for future, handler, e_handler in completed:
             response = future.result()
 
             try:
@@ -176,7 +176,7 @@ class BitTorrentClient(torrent_exceptions.ExceptionManager,object):
 
 if __name__ == '__main__':
     import sys
-    c = BitTorrentClient() 
+    c = BitTorrentClient()
     try:
         c.start_torrent(sys.argv[1])
     except KeyError:

@@ -10,7 +10,7 @@ class TrackerHandler(torrent_exceptions.ExceptionManager,object):
         self.torrent = torrent
         self.client = torrent.client
         self.data = {}
-        self.active = False 
+        self.active = False
         # if these keys are present in data, they will be included in queries
         self._optional_params = {'numwant','key','trackerid','tracker id'}
 
@@ -38,12 +38,12 @@ class TrackerHandler(torrent_exceptions.ExceptionManager,object):
 
     def handle_response(self,response):
         '''Cannot simply raise exception for errors here because asynchronous
-        handling means the exception would resolve to the client before the 
+        handling means the exception would resolve to the client before the
         torrent'''
 
-        info = debencode(io.BytesIO(response.content)) 
+        info = debencode(io.BytesIO(response.content))
         if 'failure reason' in info or 'warning message' in info:
-            self.torrent.handle_tracker_failure(self,info) 
+            self.torrent.handle_tracker_failure(self,info)
         else:
             self.act_on_response(info)
 
@@ -56,7 +56,7 @@ class TrackerHandler(torrent_exceptions.ExceptionManager,object):
 
         self.torrent.report_peer_addresses(self.peer_addresses)
 
-        # is this the right place for this to happen? 
+        # is this the right place for this to happen?
         self.torrent.report_tracker_response(self)
 
     @property
@@ -73,7 +73,7 @@ class TrackerHandler(torrent_exceptions.ExceptionManager,object):
     def peer_addresses(self):
         peer_info = self.data['peers']
         if type(peer_info) is str:
-            peers = parse_peer_string(peer_info)              
+            peers = parse_peer_string(peer_info)
         else:
             peers = ((p['ip'],p['port']) for p in peer_info)
         return peers
@@ -88,7 +88,7 @@ class TrackerHandler(torrent_exceptions.ExceptionManager,object):
                 'left':self.torrent.total_length,
                 'compact':1,
                 'supportcrypto':1}
-        
+
         for key in self._optional_params:
             try:
                 params[key] = self.data[key]
@@ -100,7 +100,7 @@ class TrackerHandler(torrent_exceptions.ExceptionManager,object):
     @prop_and_memo
     def scrape_url(self):
         '''Calculates the url to scrape torrent status info from'''
-        # find last slash in announce url. if text to right is announce, 
+        # find last slash in announce url. if text to right is announce,
         # replace it with 'scrape' for the scrape URL else AttributeError
         ind = self.announce_url.rindex('/') + 1
         end = ind+8

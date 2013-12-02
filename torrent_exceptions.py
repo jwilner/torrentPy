@@ -38,7 +38,7 @@ class MessageException(Exception):
     def __init__(self,**kwargs):
         text = kwargs.pop('message','')
         self.peer = kwargs.pop('peer')
-        self.msg = kwargs.pop('msg') 
+        self.msg = kwargs.pop('msg')
         super(MessageException,self).__init__(text)
 
 class UnknownPeerHandshake(MessageException):

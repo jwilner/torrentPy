@@ -18,7 +18,7 @@ def bencode(whole):
     '''Takes a data structure and bencodes it'''
 
     def encode_int(integer):
-        return 'i{0!s}e'.format(integer) 
+        return 'i{0!s}e'.format(integer)
 
     def encode_str(string):
         return '{0!s}:{1}'.format(len(string),string)
@@ -33,7 +33,7 @@ def bencode(whole):
                 str : encode_str,
                 list : encode_list,
                 dict : encode_dict}
-    
+
     def parse(structure):
         return dispatch[type(structure)](structure)
 
@@ -48,12 +48,12 @@ def debencode(stream):
         length = int(''.join(int_buffer)) # int buffer holds length
         current.append(stream.read(length))
         return current
-    
+
     def open_level(lev_func,current,int_buffer):
         if current:
             holding.append(current)
         return [lev_func] # new current with function in first position
-        
+
     def close_level(current,int_buffer):
         current += int_buffer # if int buffer has stuff in it at this point, this is an int
         new_struct = current[0](current[1:]) # call func stored in first pos
@@ -62,7 +62,7 @@ def debencode(stream):
             current.append(new_struct)
             return current
         except IndexError: #index error is raised when holding is empty which means we're done
-            return new_struct 
+            return new_struct
 
     dispatch = {':': parse_string,
                 'd': partial(open_level,lambda x: dict((x[y],x[y+1]) for y in range(len(x)) if y % 2 == 0)),
@@ -70,7 +70,7 @@ def debencode(stream):
                 'e': close_level,
                 'i': partial(open_level,lambda x: int(''.join(x)))}
 
-    while True: 
+    while True:
         next_char = stream.read(1)
         try:
             current = dispatch[next_char](current,int_buffer)
@@ -78,7 +78,7 @@ def debencode(stream):
         except KeyError: #if key not in dispatch, must be int or empty string
             if next_char == '':
                 return current
-            int_buffer.append(next_char) 
+            int_buffer.append(next_char)
 
 def four_bytes_to_int(four_bytes):
     return struct.unpack('>i',four_bytes)[0]
@@ -96,7 +96,7 @@ def parse_peer_string(p_string):
 
 class StreamReader(io.BytesIO):
     def read(self,n=None):
-        text = super(StreamReader,self).read(n) 
+        text = super(StreamReader,self).read(n)
         if n and len(text) != n:
             raise torrent_exceptions.RanDryException(value=text)
         return text

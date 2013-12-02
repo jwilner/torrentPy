@@ -7,7 +7,7 @@ class EventManager(object):
 
         try:
             targets,func = self._event_handlers[e_type]
-            func(event) 
+            func(event)
         except KeyError:
             return
 
@@ -28,7 +28,7 @@ class TorrentEvent(object):
             raise AttributeError
 
 class HaveCompletePiece(TorrentEvent):
-    '''Created with a piece index when a piece's download is completed''' 
+    '''Created with a piece index when a piece's download is completed'''
     pass
 
 class NewPeerRegistration(TorrentEvent):
@@ -36,7 +36,7 @@ class NewPeerRegistration(TorrentEvent):
 
 class NewTorrentPeerCreated(TorrentEvent):
     '''Created with a peer as an argument when a peer has been created
-    for a torrent''' 
+    for a torrent'''
     pass
 
 class TrackerResponseEvent(TorrentEvent):
