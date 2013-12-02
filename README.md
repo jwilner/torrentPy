@@ -2,4 +2,11 @@
 
 An exploration of the BitTorrent protocol in Python, using just select to handle the sockets. The only non-standard dependencies are the bitarray package, Requests, and a plugin to make Requests nonblocking.
 
-This currently works enough to effectively download a test case, but much strategy remains to be fleshed out. We'll see if I ever get to it.
+This is very much currently a WIP as major parts are being refactored. Do not expect it to work at the moment!
+
+##run
+```shell
+$ pip install requirements.txt
+
+$ python main.py <torrent-file>
+```
