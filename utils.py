@@ -18,16 +18,16 @@ def bencode(whole):
     '''Takes a data structure and bencodes it'''
 
     def encode_int(integer):
-        return 'i{0!s}e'.format(integer)
+        return 'i{}e'.format(integer)
 
     def encode_str(string):
-        return '{0!s}:{1}'.format(len(string),string)
+        return '{0}:{1}'.format(len(string),string)
 
     def encode_list(a_list):
-        return 'l{0}e'.format(''.join(parse(term) for term in a_list))
+        return 'l{}e'.format(''.join(parse(term) for term in a_list))
 
     def encode_dict(a_dict):
-        return 'd{0}e'.format(''.join('{0}{1}'.format(parse(k),parse(v)) for k,v in sorted(a_dict.items())))
+        return 'd{}e'.format(''.join('{0}{1}'.format(parse(k),parse(v)) for k,v in sorted(a_dict.items())))
 
     dispatch = {int : encode_int,
                 str : encode_str,
