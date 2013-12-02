@@ -1,11 +1,12 @@
 import config, io, torrent_exceptions, events
-from utils import debencode, parse_peer_string
+from utils import bdecode, parse_peer_string
 
-class TrackerHandler(torrent_exceptions.ExceptionManager,object):
+class TrackerHandler(torrent_exceptions.ExceptionManager,
+                     events.EventManager):
     '''Represents the http tracker server and handles interactions
     with it -- nested within a torrent object'''
 
-    def __init__(self,torrent,announce_url):
+    def __init__(self,announce_url):
         self.announce_url = announce_url
         self.data = {}
         self.active = False
@@ -21,9 +22,9 @@ class TrackerHandler(torrent_exceptions.ExceptionManager,object):
         handling means the exception would resolve to the client before the
         torrent'''
 
-        info = debencode(io.BytesIO(response.content))
+        info = bdecode(io.BytesIO(response.content))
+
         if 'failure reason' in info or 'warning message' in info:
-            # raise event here instead
             self.handle_event(
                     events.TrackerFailure(tracker=self,info=info))
         else:
@@ -54,10 +55,9 @@ class TrackerHandler(torrent_exceptions.ExceptionManager,object):
             peers = ((p['ip'],p['port']) for p in peer_info)
         return peers
 
+    @property
     def scrape_url(self):
         '''Calculates the url to scrape torrent status info from'''
-        # find last slash in announce url. if text to right is announce,
-        # replace it with 'scrape' for the scrape URL else AttributeError
         ind = self.announce_url.rindex('/') + 1
         end = ind+8
         if self.announce_url[ind:end] is 'announce':
