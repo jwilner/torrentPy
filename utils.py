@@ -39,7 +39,7 @@ def bencode(whole):
 
     return parse(whole)
 
-def debencode(stream):
+def bdecode(stream):
     ''' A bencoding parser that avoids recursion for s's and g's'''
 
     holding, int_buffer, current = [], [], []
@@ -100,16 +100,3 @@ class StreamReader(io.BytesIO):
         if n and len(text) != n:
             raise torrent_exceptions.RanDryException(value=text)
         return text
-
-if __name__ == '__main__':
-    import sys,pprint,io
-    try:
-        filename = sys.argv[1]
-    except IndexError:
-        filename = 'pretend_file.txt'
-
-    with io.open(filename,'rb') as f:
-        structure = debencode(f)
-    pprint.pprint(structure)
-
-
