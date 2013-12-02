@@ -1,5 +1,5 @@
-import config, io, torrent_exceptions
-from utils import debencode, parse_peer_string, prop_and_memo
+import config, io, torrent_exceptions, events
+from utils import debencode, parse_peer_string
 
 class TrackerHandler(torrent_exceptions.ExceptionManager,object):
     '''Represents the http tracker server and handles interactions
@@ -7,34 +7,14 @@ class TrackerHandler(torrent_exceptions.ExceptionManager,object):
 
     def __init__(self,torrent,announce_url):
         self.announce_url = announce_url
-        self.torrent = torrent
-        self.client = torrent.client
         self.data = {}
         self.active = False
-        # if these keys are present in data, they will be included in queries
-        self._optional_params = {'numwant','key','trackerid','tracker id'}
+
+        # if these keys are present in data, they should be included in queries
+        self.optional_params = {'numwant','key','trackerid','tracker id'}
 
         # implementing exception handling
-        self._exception_handlers = {
-                }
-        self._next_level = self._torrent
-
-    def announce(self,event=None):
-        '''Registers an HTTP request to the tracker server'''
-        request_params = self.announce_params
-
-        if event:
-            request_params['event'] = event
-            if event == 'started':
-                self.active = True
-            elif event == 'closed':
-                self.active = False
-
-        self.client.make_tracker_request(
-                self.announce_url,
-                request_params,
-                self.handle_response, # valid response callback
-                self.torrent.handle_tracker_error) # error handler
+        self._exception_handlers = {}
 
     def handle_response(self,response):
         '''Cannot simply raise exception for errors here because asynchronous
@@ -43,21 +23,17 @@ class TrackerHandler(torrent_exceptions.ExceptionManager,object):
 
         info = debencode(io.BytesIO(response.content))
         if 'failure reason' in info or 'warning message' in info:
-            self.torrent.handle_tracker_failure(self,info)
+            # raise event here instead
+            self.handle_event(
+                    events.TrackerFailure(tracker=self,info=info))
         else:
-            self.act_on_response(info)
+            old_peers = set(self.peer_addresses)
+            self.data.update(info)
+            new_peers = set(self.peer_addresses) - old_peers
 
-    def act_on_response(self,info):
-        '''Separated out from handle_response so it can be used as a callback
-        after a warning message mebbe?'''
-        self.data.update(info)
-
-        # register new announce with client at next appropriate time
-
-        self.torrent.report_peer_addresses(self.peer_addresses)
-
-        # is this the right place for this to happen?
-        self.torrent.report_tracker_response(self)
+            self.handle_event(
+                    events.TrackerResponse(
+                        tracker=self,new_peer_addresses=new_peers))
 
     @property
     def interval(self):
@@ -78,26 +54,6 @@ class TrackerHandler(torrent_exceptions.ExceptionManager,object):
             peers = ((p['ip'],p['port']) for p in peer_info)
         return peers
 
-    @property
-    def announce_params(self):
-        params = {'info_hash':self.torrent.hashed_info,
-                'peer_id':self.client.client_id,
-                'port':self.client.port,
-                'uploaded':self.torrent.uploaded,
-                'downloaded':self.torrent.downloaded,
-                'left':self.torrent.total_length,
-                'compact':1,
-                'supportcrypto':1}
-
-        for key in self._optional_params:
-            try:
-                params[key] = self.data[key]
-            except KeyError:
-                continue
-
-        return params
-
-    @prop_and_memo
     def scrape_url(self):
         '''Calculates the url to scrape torrent status info from'''
         # find last slash in announce url. if text to right is announce,
