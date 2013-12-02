@@ -1,24 +1,32 @@
+import torrent_exceptions
 
 class EventManager(object):
+
+    observer = None
+    event_handlers = {}
 
     def handle_event(self,event,e_type=None):
         if e_type is None:
             e_type = type(event)
 
         try:
-            targets,func = self._event_handlers[e_type]
-            func(event)
+            self.event_handlers[e_type](event,e_type)
         except KeyError:
-            return
+            try:
+                self.observer.handle_event(event,e_type)
+            except AttributeError:
+                pass
 
-        try:
-            for obj in targets:
-                obj.handle_event(event,e_type)
-        except AttributeError:
-            return
+class Event(object):
+    required_keywords = {}
 
-class TorrentEvent(object):
     def __init__(self,**kwargs):
+        for kw in self.required_keywords:
+            if kw not in kwargs:
+                raise torrent_exceptions.InvalidEventCreated(
+                    "{0} keyword not present in kwargs for {1}".format(
+                        kw,type(self)))
+
         self._data = kwargs
 
     def __getattr_(self,key):
@@ -26,6 +34,11 @@ class TorrentEvent(object):
             return self._data[key]
         except KeyError:
             raise AttributeError
+
+class TorrentEvent(Event):
+    '''Parent class for all Torrent class events'''
+    required_keywords = {'torrent'}
+    pass
 
 class HaveCompletePiece(TorrentEvent):
     '''Created with a piece index when a piece's download is completed'''
@@ -37,10 +50,6 @@ class NewPeerRegistration(TorrentEvent):
 class NewTorrentPeerCreated(TorrentEvent):
     '''Created with a peer as an argument when a peer has been created
     for a torrent'''
-    pass
-
-class TrackerResponseEvent(TorrentEvent):
-    '''Created when a tracker responds to an announce'''
     pass
 
 class TorrentInitiated(TorrentEvent):
@@ -55,6 +64,10 @@ class Shutdown(TorrentEvent):
     '''Created when the program is instructed to shutdown'''
     pass
 
+class PeerEvent(Event):
+    '''Parent class for all peer events'''
+    required_keywords = {'peer'}
+
 class PeerReadyToSend(TorrentEvent):
     '''Created when a peer is ready to send a message'''
     pass
@@ -62,3 +75,22 @@ class PeerReadyToSend(TorrentEvent):
 class PeerDoneSending(TorrentEvent):
     '''Created when a peer is done sending messages'''
     pass
+
+# tracker events
+
+class TrackerEvent(TorrentEvent):
+    required_keywords = {'tracker'}
+    pass
+
+class TrackerResponse(TrackerEvent):
+    '''Created when a tracker responds to an announce'''
+    pass
+
+class TrackerFailure(TrackerEvent):
+    '''Created when a tracker returns a warning or a failure'''
+    pass
+
+class TrackerRequest(TrackerEvent):
+    '''Enqueues trakcer request with client'''
+    pass
+
