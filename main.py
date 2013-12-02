@@ -1,4 +1,4 @@
-import select, socket, config, logging, torrent_exceptions
+import select, socket, config, logging, torrent_exceptions, events
 from peer import Peer
 from time import time
 from torrent import Torrent
@@ -9,7 +9,9 @@ from requests.exceptions import HTTPError
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-class BitTorrentClient(torrent_exceptions.ExceptionManager,object):
+class BitTorrentClient(torrent_exceptions.ExceptionManager,
+                       events.EventManager,
+                       object):
     '''Main object encapsulating central info and work flow for the
     process'''
 
@@ -37,13 +39,20 @@ class BitTorrentClient(torrent_exceptions.ExceptionManager,object):
 
         self._http_session = FuturesSession()
 
-        # this ideally would be a dictionary providing easy dispatch on
-        # possible errors rising to the main level. It obviously needs more
-        # cases added.
         self._exception_handlers = {
-                socket.error : self._socket_error_handler,
-                torrent_exceptions.UnknownPeerHandshake: self._unknown_peer_handler
+                torrent_exceptions.UnknownPeerHandshake: self._unknown_peer_callback
                 }
+
+        self._event_handlers = {
+                events.PeerRegistration :
+                    lambda ev : self.register(ev.peer,
+                                              read=ev.read,
+                                              write=ev.write,
+                                              error=ev.error),
+                events.PeerReadyToSend :
+                    lambda ev : self.waiting_to_write.add(ev.peer),
+                events.PeerDoneSending :
+                    lambda ev : self.waiting_to_write.discard(ev.peer)}
 
     def fileno(self):
         return self._socket.fileno()
@@ -121,15 +130,17 @@ class BitTorrentClient(torrent_exceptions.ExceptionManager,object):
 
     def _handle_http_requests(self):
         '''Checks futures and if complete, calls an appropriate handler'''
+
         logger.info('Checking HTTP requests...')
         completed = {(f,h,e) for (f,h,e) in self._futures if f.done()}
+
         for future, handler, e_handler in completed:
             response = future.result()
 
             try:
                 response.raise_for_status()
-            except HTTPError:
-                e_handler(response)
+            except HTTPError as e:
+                e_handler(e)
             else:
                 handler(response)
 
@@ -158,8 +169,9 @@ class BitTorrentClient(torrent_exceptions.ExceptionManager,object):
                 except Exception as e:
                     sock_manager.handle_exception(e)
 
-    def _unknown_peer_handler(self,e):
+    def _unknown_peer_callback(self,e):
         peer, msg = e.peer, e.msg
+
         for t in self.torrents:
             if t.hashed_info == msg.info_hash:
                 peer.torrent = t
