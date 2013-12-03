@@ -62,6 +62,8 @@ class Shutdown(TorrentEvent):
     '''Created when the program is instructed to shutdown'''
     pass
 
+# peer events
+
 class PeerEvent(Event):
     '''Parent class for all peer events'''
     required_keywords = {'peer'}

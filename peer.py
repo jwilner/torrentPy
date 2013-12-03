@@ -13,7 +13,7 @@ class Peer(torrent_exceptions.ExceptionManager,
     '''Class representing peer for specific torrent download and
     providing interface with specific TCP socket'''
 
-    def __init__(self,socket,num_pieces=None,msg_target=None,exception_target=None,event_observer=None):
+    def __init__(self,socket):
         logger.info('Instantiating peer %s',str(socket.getpeername()))
         self.socket = socket
         self.active = True
@@ -37,9 +37,6 @@ class Peer(torrent_exceptions.ExceptionManager,
         self.last_spoke_to = 0
 
         self._read_buffer = ''
-
-        # for sending process, a queue of tuples -- msg and offset remaining
-        # to be sent
         self._pending_send = deque()
 
         self.outstanding_requests = set()
@@ -93,15 +90,12 @@ class Peer(torrent_exceptions.ExceptionManager,
     def fileno(self):
         return self._socket.fileno()
 
-    def wanted_pieces(self,have_list):
-        return {i for i,v in enumerate(self.has) if v and not have_list[i]}
-
     def handle_incoming(self):
         self.last_heard_from = time()
 
         for msg in self._read_from_socket():
             try:
-                self.handle_message_event(msg)
+                self.handle_message(msg)
             except torrent_exceptions.FatallyFlawedIncomingMessage as e:
                 self.handle_exception(e)
 
@@ -113,14 +107,12 @@ class Peer(torrent_exceptions.ExceptionManager,
 
         for msg in sent_msgs:
             try:
-                self.handle_message_event(msg)
+                self.handle_message(msg)
             except torrent_exceptions.FatallyFlawedOutgoingMessage as e:
                 self.handle_exception(e)
 
         if not self._pending_send:
-            self.handle_event(
-                    events.PeerDoneSending(peer=self)
-                    )
+            self.handle_event(events.PeerDoneSending(peer=self))
 
     def enqueue_message(self,msg):
         # if outbox is currently empty, then we'll want to tell the client
@@ -128,9 +120,7 @@ class Peer(torrent_exceptions.ExceptionManager,
         self._pending_send.append([msg,len(msg)])
 
         if notify: # tell client
-            self.handle_event(
-                    events.PeerReadyToSend(peer=self)
-                    )
+            self.handle_event(events.PeerReadyToSend(peer=self))
 
     def drop(self):
         '''Procedure to disconnect socket'''
@@ -221,7 +211,7 @@ class Peer(torrent_exceptions.ExceptionManager,
             raise torrent_exceptions.FatallyFlawedIncomingMessage(
                     peer=self,msg=msg)
 
-        if not self.torrent: # this is an unknown peer
+        if not self.handshake['sent']: # this is an unknown peer
             # will resolve to client, where it'll be handled
             raise torrent_exceptions.UnknownPeerHandshake(
                     msg=msg,peer=self)
@@ -251,15 +241,13 @@ class Peer(torrent_exceptions.ExceptionManager,
             # peer is being obnoxious -- do something about it?
             pass
         if msg.length > config.MAX_REQUESTED_PIECE_LENGTH:
-            # this cat's cray -- drop 'em
-            raise torrent_exceptions.FatallyFlawedMessage(
+            raise torrent_exceptions.FatallyFlawedIncomingMessage(
                     peer=self,msg=msg)
         self.wants.add((msg.index,msg.begin,msg.length))
 
     def _process_cancel(self,msg):
         if msg.length > config.MAX_REQUESTED_PIECE_LENGTH:
-            # initiate dropping procedure
-            raise torrent_exceptions.FatallyFlawedMessage(
+            raise torrent_exceptions.FatallyFlawedIncomingMessage(
                     peer=self,msg=msg)
         self.wants.discard((msg.index,msg.begin,msg.length))
 

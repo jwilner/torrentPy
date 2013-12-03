@@ -202,7 +202,7 @@ class Torrent(events.EventManager,
         else:
             # this pattern ensures that an IndexError is only raised if the
             # key isn't found at ANY level of recursion
-            raise KeyError('{0} not found in torrent data.'.format(key))
+            raise KeyError('{} not found in torrent data.'.format(key))
 
     def _handshake_maker(self,peer):
         return  messages.Handshake(

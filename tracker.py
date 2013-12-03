@@ -18,23 +18,19 @@ class TrackerHandler(torrent_exceptions.ExceptionManager,
         self._exception_handlers = {}
 
     def handle_response(self,response):
-        '''Cannot simply raise exception for errors here because asynchronous
-        handling means the exception would resolve to the client before the
-        torrent'''
+        '''Parses response, updates tracker data, raises appropriate event'''
 
         info = bdecode(io.BytesIO(response.content))
 
         if 'failure reason' in info or 'warning message' in info:
-            self.handle_event(
-                    events.TrackerFailure(tracker=self,info=info))
+            self.handle_event(events.TrackerFailure(tracker=self,info=info))
         else:
             old_peers = set(self.peer_addresses)
             self.data.update(info)
             new_peers = set(self.peer_addresses) - old_peers
 
-            self.handle_event(
-                    events.TrackerResponse(
-                        tracker=self,new_peer_addresses=new_peers))
+            self.handle_event(events.TrackerResponse(
+                                    tracker=self,new_peer_addresses=new_peers))
 
     @property
     def interval(self):

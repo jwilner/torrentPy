@@ -2,10 +2,6 @@ from utils import memo
 import os, torrent_exceptions, io, itertools
 
 
-@memo
-def safe_filename(filename):
-    return filename.replace(' ','_')
-
 class FileHandler(object):
     '''A class for handling file operations within the torrent. Takes files,
      a list of dictionaries of length and path, and a list of piece lengths.
@@ -19,7 +15,7 @@ class FileHandler(object):
 
         i = 1
         while os.path.exists(test_name):
-            test_name = directory+'({0})'.format(i)
+            test_name = directory+'({})'.format(i)
             i += 1
 
         self._directory = test_name+'/'
@@ -27,11 +23,13 @@ class FileHandler(object):
 
         self._files = {}
         start_in_bytes = 0
+
         for f in files:
-            full_path = safe_filename(os.path.join(self._directory,*f['path']))
+            full_path = os.path.join(self._directory,*f['path']).replace(' ','_')
             dir_path = os.path.dirname(full_path)
             if not os.path.exists(dir_path):
                 os.makedirs(dir_path)
+
             f.open(full_path,mode='w').close()
 
             end_in_bytes = start_in_bytes + int(f['length'])
@@ -53,7 +51,6 @@ class FileHandler(object):
                 f.seek(s_point)
                 f.write(stream.read(length))
 
-        # check if piece complete
         self._is_piece_complete(piece)
 
     def read(self,piece,offset,length):
@@ -61,7 +58,7 @@ class FileHandler(object):
         return itertools.chain.from_iterable(
                 self._read_helper(file_path,seek_point,read_amount)
                     for file_path,seek_point,read_amount
-                    in self._block_to_files(piece,offset,length))
+                       in self._block_to_files(piece,offset,length))
 
     def _read_helper(self,file_path,seek_point,amount):
         with io.open(file_path,mode='rb') as f:

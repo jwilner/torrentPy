@@ -7,7 +7,7 @@ INCOMING = 'INCOMING'
 
 class MessageManager():
 
-    def _handle_message_event(self,msg,msg_type=None):
+    def handle_message_event(self,msg,msg_type=None):
         '''Dispatch procedure common to all message handling objects'''
         if msg_type is None:
             msg_type = type(msg)
