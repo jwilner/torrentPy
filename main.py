@@ -6,7 +6,7 @@ import torrent_exceptions
 import events
 from peer import Peer
 from time import time
-from torrent import Torrent
+from strategies import TorrentManager
 from collections import defaultdict
 from requests_futures.sessions import FuturesSession
 from requests.exceptions import HTTPError
@@ -28,6 +28,7 @@ class BitTorrentClient(torrent_exceptions.ExceptionManager,
 
     _futures = set()  # pending http_requests
     torrents = set()
+    managers = set()  # strategy managers
     _timers = set()  # timer tuple pairs -- callback,  timestamp
 
     def __init__(self, port=config.DEFAULT_PORT, client_id=config.CLIENT_ID):
@@ -46,8 +47,6 @@ class BitTorrentClient(torrent_exceptions.ExceptionManager,
         self._http_session = FuturesSession()
 
         self._exception_handlers = {
-            torrent_exceptions.UnknownPeerHandshake:
-            self._unknown_peer_callback
             }
 
         self._event_handlers = {
@@ -61,20 +60,24 @@ class BitTorrentClient(torrent_exceptions.ExceptionManager,
             lambda ev: self.waiting_to_write.add(ev.peer),
 
             events.PeerDoneSending:
-            lambda ev: self.waiting_to_write.discard(ev.peer)}
+            lambda ev: self.waiting_to_write.discard(ev.peer),
+
+            events.UnknownPeerHandshake: self._unknown_peer_callback}
 
     def fileno(self):
         return self._socket.fileno()
 
-    def __repr__(self):
+    def __str__(self):
         return "<Joe's BitTorrent Client--{0}>".format(self._data['client_id'])
 
-    def start_torrent(self, filename):
+    def start_torrent(self, filename, options=None):
         '''Takes a filename for a torrent file,  processes that file and
         enqueues a request via socket.'''
 
         logger.info('Adding torrent described by %s', filename)
-        self.torrents.add(Torrent(filename, self))
+        self.managers.add(TorrentManager(self.client_id,
+                                         filename,
+                                         options))
 
     def register(self, sock_manager, **socket_handlers):
         '''Register socket_abstraction with fileno and handlers'''
@@ -185,12 +188,11 @@ class BitTorrentClient(torrent_exceptions.ExceptionManager,
                     sock_manager.handle_exception(e)
 
     def _unknown_peer_callback(self, e):
-        peer,  msg = e.peer,  e.msg
+        peer, msg = e.peer, e.msg
 
-        for t in self.torrents:
-            if t.hashed_info == msg.info_hash:
-                peer.torrent = t
-                t.add_peer(peer)
+        for manager in self.managers:
+            if manager.hashed_info == msg.info_hash:
+                manager.register_unknown_peer(peer)
                 break
         else:
             # not interested in any of our torrents

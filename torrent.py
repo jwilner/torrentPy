@@ -5,7 +5,6 @@ import messages
 import events
 import bitarray
 import torrent_exceptions
-import strategies
 from file_handler import FileHandler
 from tracker import TrackerHandler
 from hashlib import sha1
@@ -22,9 +21,9 @@ class Torrent(events.EventManager,
     doesn't make any 'decisions.' They're all handled in the Strategy
     instance.'''
 
-    def __init__(self, filename, client):
+    def __init__(self, filename, client_id):
         '''Opens file with context manager'''
-        self.client = client
+        self.client_id = client_id
         self.peers = {}
         self._cached_messages = {}
         self._trackers = set()
@@ -37,21 +36,11 @@ class Torrent(events.EventManager,
         self._file_handler = FileHandler(self.query('name'), self.files,
                                          [p['length'] for p in self.pieces])
 
-        # instantiate strategy with strategy_manager
-        self._strategy_manager = \
-            strategies.StrategyManager(strategies.default_set)
-
-        self._strategy_manager.update(strategies.INIT_EVENT)
-
-        self._strategy = self._strategy_manager.current(self)
-        self._strategy.init_callback()  # should start up trackers
-
         self._message_dispatch = {
             messages.Handshake: self._handshake_maker,
             messages.Bitfield: self._bitfield_maker
             }
 
-        self._next_message_level = self._strategy
         self._message_handlers = {
             messages.INCOMING: {
                 messages.Have:
@@ -63,8 +52,7 @@ class Torrent(events.EventManager,
                 }
             }
 
-        self._next_level = self._strategy
-        self.exception_handlers = {}
+        self._exception_handlers = {}
 
     def __str__(self):
         return '<Torrent tracked at {0}>'.format(self.announce)
@@ -123,22 +111,6 @@ class Torrent(events.EventManager,
         except KeyError:
             msg = message_type(*args, **kwargs)
         peer.enqueue_message(msg)
-
-    def report_peer_addresses(self, peers):
-        '''Adds peers if they're not already registered'''
-        for peer_address in peers:
-            if self._strategy.want_peer(peer_address):
-                s = socket.socket()
-                s.connect(peer_address)
-                peer = Peer(s, self._client, self)
-                self.add_peer(peer)
-
-    def report_tracker_response(self, tracker):
-        self._strategy.report_tracker_response(tracker)
-
-    def add_peer(self, peer):
-        self.peers[peer.address] = peer
-        self._strategy.new_peer_callback(peer)
 
     def handle_block(self, piece_msg):
         index, begin, data = piece_msg.payload
@@ -214,12 +186,11 @@ class Torrent(events.EventManager,
             raise KeyError('{} not found in torrent data.'.format(key))
 
     def _handshake_maker(self, peer):
-        return messages.Handshake(self.client.client_id, self.hashed_info)
+        return messages.Handshake(self.client_id, self.hashed_info)
 
     def _bitfield_maker(self, peer, override=None, *args):
         have = override if override is not None else self.have
 
         string = ''.join(str(bit) for bit in have)
         b = bitarray.bitarray(string)
-        msg = messages.Bitfield(b.tobytes())
-        return msg
+        return messages.Bitfield(b.tobytes())

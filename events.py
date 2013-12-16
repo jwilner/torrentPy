@@ -3,15 +3,12 @@ import torrent_exceptions
 
 class EventManager(object):
 
-    event_observer = None
-    event_handlers = {}
-
     def handle_event(self, event, e_type=None):
         if e_type is None:
             e_type = type(event)
 
         try:
-            self.event_handlers[e_type](event, e_type)
+            self._event_handlers[e_type](event, e_type)
         except KeyError:
             try:
                 self.event_observer.handle_event(event, e_type)
@@ -46,6 +43,11 @@ class TorrentEvent(Event):
 
 class HaveCompletePiece(TorrentEvent):
     '''Created with a piece index when a piece's download is completed'''
+    pass
+
+
+class UnknownPeerHandshake(TorrentEvent):
+    '''Contains a peer and the handshake'''
     pass
 
 

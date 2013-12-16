@@ -11,7 +11,7 @@ class ExceptionManager():
             self._exception_handlers[e_type](e)
         except KeyError:
             try:
-                self._next_exception_level.handle_exception(e, e_type=e_type)
+                self.next_exception_level.handle_exception(e, e_type=e_type)
             except AttributeError:
                 raise e
 
@@ -48,8 +48,6 @@ class MessageException(Exception):
         super(MessageException, self).__init__(text)
 
 
-class UnknownPeerHandshake(MessageException):
-    pass
 
 
 class FatallyFlawedIncomingMessage(MessageException):

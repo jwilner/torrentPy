@@ -93,9 +93,6 @@ class Peer(torrent_exceptions.ExceptionManager,
         # exception handling
         self._exception_handlers = {}
 
-    def __repr__(self):
-        return self.__str__()
-
     def __str__(self):
         return '<Peer at {0}:{1}>'.format(self.ip,  self.port)
 
@@ -226,8 +223,7 @@ class Peer(torrent_exceptions.ExceptionManager,
 
         if not self.handshake['sent']:  # this is an unknown peer
             # will resolve to client,  where it'll be handled
-            raise torrent_exceptions.UnknownPeerHandshake(msg=msg,
-                                                          peer=self)
+            self.handle_event(events.UnknownPeerHandshake(msg=msg, peer=self))
 
     def _process_have(self, msg):
         self.has[msg.piece_index] = 1

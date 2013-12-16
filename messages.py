@@ -19,7 +19,7 @@ class MessageManager():
             pass
 
         try:
-            self._next_message_level.handle_message_event(self, msg, msg_type)
+            self.next_message_level.handle_message_event(self, msg, msg_type)
         except AttributeError:
             pass
 

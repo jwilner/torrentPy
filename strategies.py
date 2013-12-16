@@ -1,37 +1,51 @@
 import messages
+import socket
 import random
 import config
 import torrent_exceptions
 import events
+from peer import Peer
+from torrent import Torrent
 
 '''Strategy objects would be chosen based on the current state of the
 local torrent,  while the strategy object makes decisions about actions for
 particular peers on a given go through the event loop'''
 
 
-class StrategyManager(events.EventManager):
+class TorrentManager(events.EventManager,
+                     torrent_exceptions.ExceptionManager,
+                     object):
 
-    def __init__(self, rules_strategies):
-        self._rules_strategies = rules_strategies
-        self.current = None
+    def __init__(self, client_id, filename, events_strategies):
+        '''Instantiates torrent object and strategy'''
 
-    def update(self, torrent, event=None):
-        try:
-            self.current = self._parse_rules(
-                torrent if event is None else event)
-        except torrent_exceptions.NoStrategyFound:
-            pass
-        return self.current
+        if not events_strategies:
+            events_strategies = default_set
 
-    def _parse_rules(self, argument):
-        for rule, strategy in self._rules_strategies:
-            try:
-                if rule(argument):
-                    return strategy
-            except:
-                continue
-        else:
-            raise torrent_exceptions.NoStrategyFound
+        self._torrent = Torrent(filename, client_id)
+        self._events_strategies = events_strategies
+        self._set_strategy(events.INIT_EVENT)
+
+    def _set_strategy(self, ev):
+        strategy_type = self._choose_strategy(ev)
+        self._strategy = strategy_type(self._torrent)
+        self._strategy.event_observer = self
+        self._strategy.next_exception_level = self
+
+    def _choose_strategy(self, ev):
+        ev_type = type(ev)
+        for event_type, strategy in self._events_strategies:
+            if ev_type is event_type:
+                return strategy
+        raise torrent_exceptions.NoStrategyFound()
+
+    def register_unknown_peer(self, peer):
+        if self._strategy.want_peer(peer):
+            self._establish_contact(peer)
+
+    @property
+    def hashed_info(self):
+        return self._torrent.hashed_info
 
 
 class Strategy(events.EventManager,
@@ -44,13 +58,14 @@ class Strategy(events.EventManager,
     def __init__(self, torrent):
 
         self._torrent = torrent
+        torrent.next_message_level = self
+        torrent.event_observer = self
 
         self._event_handlers = {
             events.TrackerResponse: self._tracker_response_callback
             }
 
         # exception handling implementing ExceptionHandler
-        self._next_exception_level = torrent.client
         self._exception_handlers = {
             torrent_exceptions.FatallyFlawedIncomingMessage:
             lambda e: self._drop_peer(e.peer),
@@ -79,12 +94,26 @@ class Strategy(events.EventManager,
 
     def want_peer(self, peer_address):
         '''All these tests must pass in order for a peer to be added'''
-        return (peer_address[0] != config.LOCAL_ADDRESS and
-                peer_address not in self._torrent.peers and
-                len(self._torrent.peers) <= self._MAX_PEERS)
+        return peer_address[0] != config.LOCAL_ADDRESS and \
+            peer_address not in self._torrent.peers and \
+            len(self._torrent.peers) <= self._MAX_PEERS
 
-    def new_peer_callback(self, peer):
-        '''Defines behavior to call after creating a new peer'''
+    def tracker_response_callback(self, ev):
+        for adr in ev.new_peer_addresses:
+            if self.want_peer(adr):
+                s = socket.socket()
+                s.connect(adr)
+                peer = Peer(s)
+                self._establish_contact(peer)
+
+        # check back in at requested interval
+        self.client\
+            .add_timer(ev.tracker.interval,
+                       lambda: self.make_tracker_announce_request(ev.tracker),
+                       self.handle_exception)
+
+    def _establish_contact(self, peer):
+        self._torrent.peers[peer.address] = peer
         msgs = [messages.Handshake]
 
         if any(self._torrent.have):
@@ -92,17 +121,6 @@ class Strategy(events.EventManager,
 
         for msg in msgs:
             self._torrent.dispatch(peer, msg)
-
-    def tracker_response_callback(self, ev):
-        for adr in ev.new_peer_addresses:
-            if self.want_peer(adr):
-                self.make_peer(adr)
-
-        # check back in at requested interval
-        self.client\
-            .add_timer(ev.tracker.interval,
-                       lambda: self.make_tracker_announce_request(ev.tracker),
-                       self.handle_exception)
 
     def make_announce_request(self, tracker, event_type=None):
         announce_params = {
@@ -171,4 +189,4 @@ class RandomPieceStrategy(Strategy):
         return random.shuffle([k for k, v in self._torrent.piece_record.items()
                                if v != self._torrent.piece_length])[:n]
 
-default_set = ((lambda x: True,  RandomPieceStrategy), )
+default_set = ((events.INIT_EVENT,  RandomPieceStrategy), )
