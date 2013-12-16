@@ -1,13 +1,14 @@
 import config
 from bitarray import bitarray
-from utils import int_to_big_endian, four_bytes_to_int, prop_and_memo, memo
+from utils import int_to_big_endian,  four_bytes_to_int,  prop_and_memo,  memo
 
 OUTGOING = 'OUTGOING'
 INCOMING = 'INCOMING'
 
+
 class MessageManager():
 
-    def handle_message_event(self,msg,msg_type=None):
+    def handle_message_event(self, msg, msg_type=None):
         '''Dispatch procedure common to all message handling objects'''
         if msg_type is None:
             msg_type = type(msg)
@@ -18,30 +19,27 @@ class MessageManager():
             pass
 
         try:
-            self._next_message_level.handle_message_event(self,msg,msg_type)
+            self._next_message_level.handle_message_event(self, msg, msg_type)
         except AttributeError:
             pass
 
 
-class InvalidMessage(Exception):
-    pass
-
-class InvalidHandshake(InvalidMessage):
-    pass
-
 class Msg(object):
     '''super class'''
 
-    def __init__(self,**kwargs):
+    def __init__(self, **kwargs):
         self.EVENT_TYPE = kwargs.pop('msg_event')
         self.peer = None
 
     def __repr__(self):
         return '{0}'.format(type(self))
 
+
 class Handshake(Msg):
-    def __init__(self,peerid,info_hash,reserved=config.RESERVED_BYTES,pstr=config.PROTOCOL):
-        super(Handshake,self).__init__()
+
+    def __init__(self, peerid, info_hash,
+                 reserved=config.RESERVED_BYTES, pstr=config.PROTOCOL):
+        super(Handshake, self).__init__()
         self.peer_id = peerid
         self.info_hash = info_hash
         self.reserved = reserved
@@ -49,15 +47,17 @@ class Handshake(Msg):
         self.pstrlen = chr(len(self.pstr))
 
     def __str__(self):
-        msg =  self.pstrlen + self.pstr + self.reserved + self.info_hash + self.peer_id
-        return msg
+        return '{0}{1}{2}{3}{4}'.format(self.pstrlen, self.pstr,
+                                        self.reserved, self.info_hash,
+                                        self.peer_id)
+
 
 class Message(Msg):
     id = ''
 
-    def __init__(self,*args,**kwargs):
-        super(Message,self).__init__()
-        from_string = kwargs.pop('from_string',False)
+    def __init__(self, *args, **kwargs):
+        super(Message, self).__init__()
+        from_string = kwargs.pop('from_string', False)
 
         if from_string:
             self._string = args[0]
@@ -66,10 +66,10 @@ class Message(Msg):
 
     @memo
     def __str__(self):
-        body = '{0}{1}'.format(self._encoded_id(),self.string)
+        body = '{0}{1}'.format(self._encoded_id(), self.string)
         strlen = int_to_big_endian(len(body))
-        msg = '{0}{1}'.format(strlen,body)
-        print 'This {0} is {1} characters long.'.format(type(self),len(msg))
+        msg = '{0}{1}'.format(strlen, body)
+        print 'This {0} is {1} characters long.'.format(type(self), len(msg))
         return msg
 
     @prop_and_memo
@@ -100,25 +100,31 @@ class Message(Msg):
     def _encoded_id(self):
         return chr(self.id)
 
+
 class KeepAlive(Message):
     '''No payload or id'''
     pass
 
+
 class Choke(Message):
     '''No payload'''
-    id  = 0
+    id = 0
+
 
 class Unchoke(Message):
     '''No payload'''
     id = 1
 
+
 class Interested(Message):
     '''No payload'''
     id = 2
 
+
 class NotInterested(Message):
     '''No payload'''
     id = 3
+
 
 class Have(Message):
     '''Expects piece index as an init arg'''
@@ -130,6 +136,7 @@ class Have(Message):
 
     def _parse_string(self):
         return self._string
+
 
 class Bitfield(Message):
     '''Expects a bitfield as an init arg'''
@@ -147,8 +154,9 @@ class Bitfield(Message):
     def _parse_payload(self):
         return self.bitfield.tobytes()
 
+
 class Request(Message):
-    '''Expects index, begin, length as init args'''
+    '''Expects index,  begin,  length as init args'''
     id = 6
 
     @property
@@ -164,19 +172,21 @@ class Request(Message):
         return self.payload[2]
 
     def get_triple(self):
-        return self.index,self.begin,self.length
+        return self.index, self.begin, self.length
 
     def _parse_string(self):
-        return [four_bytes_to_int(self._string[i:i+4]) for i in (0,4,8)]
+        return [four_bytes_to_int(self._string[i:i+4]) for i in (0, 4, 8)]
 
     def _parse_payload(self):
         return ''.join(int_to_big_endian(i) for i in self._payload)
 
     def __repr__(self):
-        return '<Request for piece {0} beginning at {1} with length {2} >'.format(self.index,self.begin,self.length)
+        return '<Request for piece {0} beginning at {1} with length {2}>' \
+            .format(self.index, self.begin, self.length)
+
 
 class Piece(Message):
-    '''Expects index, begin, block as init args'''
+    '''Expects index,  begin,  block as init args'''
     id = 7
 
     @property
@@ -192,22 +202,25 @@ class Piece(Message):
         return self.payload[2]
 
     def _parse_string(self):
-        return [four_bytes_to_int(self._string[i:i+4]) for i in (0,4)]+[self._string[8:]]
+        return [four_bytes_to_int(self._string[i:i+4])
+                for i in (0, 4)]+[self._string[8:]]
 
     def _parse_payload(self):
         return ''.join(int_to_big_endian(i) for i in self._payload)
 
     def __repr__(self):
-        return '<Piece message for piece {0} beginning at {1} with length {2} >'.format(self.index,self.begin,len(self.block))
+        return '<Piece {0} beginning at {1} with length {2}>'\
+            .format(self.index, self.begin, len(self.block))
 
 
-class Cancel(Request): # employs same payload as Request
-    '''Expects index, begin, length as init args'''
+class Cancel(Request):  # employs same payload as Request
+    '''Expects index,  begin,  length as init args'''
     id = 8
 
+
 class Port(Message):
-   '''Expects listen-port as an argument'''
-   id = 9
+    '''Expects listen-port as an argument'''
+    id = 9
 
 
-lookup = { sc.id:sc for sc in Message.__subclasses__()}
+lookup = {sc.id: sc for sc in Message.__subclasses__()}
