@@ -1,5 +1,4 @@
 import io
-import socket
 import logging
 import messages
 import events
@@ -8,7 +7,6 @@ import torrent_exceptions
 from file_handler import FileHandler
 from tracker import TrackerHandler
 from hashlib import sha1
-from peer import Peer
 from utils import memo,  bencode,  bdecode
 
 logger = logging.getLogger(__name__)
@@ -34,7 +32,8 @@ class Torrent(events.EventManager,
         # just so this init function doesn't get any bigger...
         self._calculate_properties()
         self._file_handler = FileHandler(self.query('name'), self.files,
-                                         [p['length'] for p in self.pieces])
+                                         [p['length'] for p in self.pieces],
+                                         self.piece_hashes)
 
         self._message_dispatch = {
             messages.Handshake: self._handshake_maker,
@@ -46,7 +45,8 @@ class Torrent(events.EventManager,
                 messages.Have:
                 lambda msg: self._increment_frequency(msg.index),
 
-                messages.Bitfield: self._process_bitfield
+                messages.Bitfield: self._process_bitfield,
+                messages.Piece: lambda m: self.file_handler.write(*m.payload)
                 },
             messages.OUTGOING: {
                 }
@@ -78,9 +78,6 @@ class Torrent(events.EventManager,
         self.piece_hashes = [pieces[i:i+20] for i in range(0, len(pieces), 20)]
         self.num_pieces = len(self.piece_hashes)
 
-        # tuple information pointing to filename maybe?
-        self.piece_record = {i: {} for i in range(self.num_pieces)}
-
         self.file_mode = 'multi' if 'files' in self.info else 'single'
         if self.file_mode == 'single':
             self.files = [{'length': int(self.query('length')),
@@ -111,16 +108,6 @@ class Torrent(events.EventManager,
         except KeyError:
             msg = message_type(*args, **kwargs)
         peer.enqueue_message(msg)
-
-    def handle_block(self, piece_msg):
-        index, begin, data = piece_msg.payload
-        coords = begin, len(data)
-        if coords in self.piece_record[index]:
-            return
-        self.piece_record[index][coords] = data  # write data to disk here?
-
-        if self._is_piece_complete(index):
-            self._complete_piece_callback(index)
 
     def start_tracker(self, announce_url):
         t = TrackerHandler(self, announce_url)
@@ -181,16 +168,13 @@ class Torrent(events.EventManager,
                 except KeyError:
                     continue
         else:
-            # this pattern ensures that an IndexError is only raised if the
-            # key isn't found at ANY level of recursion
             raise KeyError('{} not found in torrent data.'.format(key))
 
     def _handshake_maker(self, peer):
         return messages.Handshake(self.client_id, self.hashed_info)
 
     def _bitfield_maker(self, peer, override=None, *args):
+        # enables lazy bitfield
         have = override if override is not None else self.have
-
-        string = ''.join(str(bit) for bit in have)
-        b = bitarray.bitarray(string)
+        b = bitarray.bitarray(''.join(str(bit) for bit in have))
         return messages.Bitfield(b.tobytes())

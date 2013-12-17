@@ -1,6 +1,7 @@
 import os
 import io
-import itertools
+import events
+from hashlib import sha1
 
 
 def safe_filename(name):
@@ -13,7 +14,7 @@ class FileHandler(object):
      The basic idea is to break all reads and writes into the common
      denominator of bytes'''
 
-    def __init__(self, name, files, piece_lengths, dirname=None):
+    def __init__(self, name, files, piece_lengths, piece_hashes, dirname=None):
 
         start_name = os.splitext(name) if dirname is None else dirname
         directory = test_name = safe_filename(start_name)
@@ -47,6 +48,7 @@ class FileHandler(object):
                               for i in range(len(piece_lengths))]
 
         self._piece_length = piece_lengths[0]
+        self._piece_hashes = piece_hashes
 
     def write(self, piece, offset, value):
         stream = io.BytesIO(value)
@@ -60,10 +62,17 @@ class FileHandler(object):
 
     def read(self, piece, offset, length):
         '''Takes piece coordinates and returns chained together bytearrays'''
-        return itertools.chain.from_iterable(
-            self._read_helper(file_path, seek_point, read_amount)
-            for file_path, seek_point, read_amount
-            in self._block_to_files(piece, offset, length))
+        return ''.join(self._read_helper(file_path, seek_point, read_amount)
+                       for file_path, seek_point, read_amount
+                       in self._block_to_files(piece, offset, length))
+
+    def _is_piece_complete(self, index):
+        '''Check if piece at given index is proper length and hash'''
+        length = self.piece_lengths[index]
+        in_file = self.read(index, 0, length)
+        if len(in_file) == length and \
+                sha1(in_file).digest() == self.piece_hashes[index]:
+            self.handle_event(events.HaveComplete(index=index))
 
     def _read_helper(self, file_path, seek_point, amount):
         with io.open(file_path, mode='rb') as f:
@@ -71,8 +80,8 @@ class FileHandler(object):
             return f.read(amount)
 
     def _block_to_files(self, piece_index, offset, block_length):
-        '''Takes a piece index,  an offset,  and a length; yields triples
-        offset filename,  seek_point,  and length.'''
+        '''Takes a piece index,  an offset,  and a length; yields triples of
+        filename,  seek_point,  and length.'''
 
         block_start = self._piece_starts[piece_index] + offset
         block_end = block_start + block_length
@@ -85,5 +94,5 @@ class FileHandler(object):
             seek = block_start - file_start
             remaining_length = block_end - file_end
             end = (file_end if remaining_length else block_end) - file_start
-            yield (file_path, seek, end)
+            yield file_path, seek, end
             block_start,  block_length = file_end,  remaining_length

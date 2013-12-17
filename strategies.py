@@ -62,7 +62,8 @@ class Strategy(events.EventManager,
         torrent.event_observer = self
 
         self._event_handlers = {
-            events.TrackerResponse: self._tracker_response_callback
+            events.TrackerResponse: self._tracker_response_callback,
+            events.HaveCompletePiece: self._handle_have_event
             }
 
         # exception handling implementing ExceptionHandler
@@ -107,10 +108,13 @@ class Strategy(events.EventManager,
                 self._establish_contact(peer)
 
         # check back in at requested interval
-        self.client\
+        self.client \
             .add_timer(ev.tracker.interval,
                        lambda: self.make_tracker_announce_request(ev.tracker),
                        self.handle_exception)
+
+    def _handle_have_event(self, event):
+        pass
 
     def _establish_contact(self, peer):
         self._torrent.peers[peer.address] = peer
@@ -152,15 +156,13 @@ class Strategy(events.EventManager,
                       key=lambda x: x[1], reversed=True)
 
     def _drop_peer(self, peer):
-        self._torrent.client.drop_peer(peer)
         self._torrent.drop_peer(peer)
         peer.drop()
 
     predicates = {
         'NON_CHOKING': lambda p: not p.choking_me,
         'UNDER_TEN_REQUESTS': lambda p: len(p.outstanding_requests) < 10,
-        'WANTED_PIECES': lambda p: bool(p.wanted_pieces),
-        'HAS_PIECE': lambda p,  i: p.has[i]
+        'WANTED_PIECES': lambda p: bool(p.wanted_pieces)
         }
 
     def _filter_peers(self, peers, predicates):
